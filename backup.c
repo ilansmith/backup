@@ -17,6 +17,7 @@
 #define ACT_BACKUP 0
 #define ACT_EDIT 1
 #define ACT_HELP 2
+#define ACT_ERROR 3
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
@@ -321,12 +322,12 @@ static int remove_backup_dir(void)
 /*TODO*/
 static int get_args(int argc, char *argv[])
 {
-#define ARG_EL "be" /* TODO: v(verbose), h(help) */
+#define ARG_EL "beh" /* TODO: v(verbose), h(help) */
 
     int ret;
 
     if (argc != 2)
-	return ACT_HELP;
+	return ACT_ERROR;
 
     switch ((char)getopt(argc, argv, ARG_EL))
     {
@@ -336,8 +337,12 @@ static int get_args(int argc, char *argv[])
 	case 'e':
 	    ret = ACT_EDIT;
 	    break;
-	default:
+	case 'h':
 	    ret = ACT_HELP;
+	    break;
+	default:
+	    ret = ACT_ERROR;
+	    break;
     }
     return ret;
 }
@@ -400,10 +405,48 @@ static int edit(void)
     return 0;
 }
 
-/*TODO*/
 static void usage(void)
 {
-    printf("usage() coming soon...\n");
+#define FMT_HIGHLIGHT "\033[1;38m"
+#define FMT_UNDERLINE "\033[4;38m"
+#define FMT_RESET "\033[00;00;00m"
+#define COPYRIGHT 0xA9
+    printf(
+	"usage:	%sbackup < -e | -b | -h >%s\n"
+	"   where\n"
+	"   %s-e%s  Edit the configuration file.\n"
+	"	Set the environment variable %sEDITOR%s to use an editor of "
+	"your\n"
+	"	choice. If %sEDITOR%s is not set, %sbackup%s will use %svim%s "
+	"for editing\n"
+	"	the configuration file.\n"
+	"	Once an existing configuration file is modifed, %sbackup%s\n"
+	"	displays a diff between the previous and the current "
+	"versions.\n"
+	"	Set the environment variable %sDIFFPROG%s to use a diff "
+	"program\n"
+	"	of your choice. If %sDIFFPROG%s is not set, %sbackup%s will "
+	"use %sGNU \n"
+	"	diff%s.\n"
+	"   %s-b%s  Backup the files and directories mentioned in the \n"
+	"	configuration file. The gzipped tarball %sbackup.tar.gz%s\n"
+	"	containing the backed up files will be placed in the \n"
+	"	working directory.\n"
+	"   %s-h%s  Print this message and exit.\n"
+	"\n%s%c IAS Software, October 2004%s\n",
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_UNDERLINE, FMT_RESET,
+	FMT_UNDERLINE, FMT_RESET, FMT_HIGHLIGHT, FMT_RESET, FMT_HIGHLIGHT, 
+	FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_UNDERLINE, FMT_RESET,
+	FMT_UNDERLINE, FMT_RESET, FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, COPYRIGHT, FMT_RESET);
 }
 
 int main(int argc, char *argv[])
@@ -423,7 +466,7 @@ int main(int argc, char *argv[])
 	    usage();
 	    break;
 	default:
-	    /* TODO: sanity check */
+	    error("try 'backup -h' for more information");
 	    break;
     }
     return ret;
