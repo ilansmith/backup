@@ -444,6 +444,9 @@ static void usage(void)
 	"usage:	%sbackup < -e | -b | -h >%s\n"
 	"   where\n"
 	"   %s-e%s  Edit the configuration file.\n"
+	"	Enter the full paths to directories or files you wish to "
+	"backup.\n"
+	"	A line can be commented out by using the %s#%s character.\n"
 	"	Set the environment variable %sEDITOR%s to use an editor of "
 	"your\n"
 	"	choice. If %sEDITOR%s is not set, %sbackup%s will use %svim%s "
@@ -463,6 +466,7 @@ static void usage(void)
 	"	working directory.\n"
 	"   %s-h%s  Print this message and exit.\n"
 	"\n%s%c IAS Software, October 2004%s\n",
+	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_UNDERLINE, FMT_RESET,
