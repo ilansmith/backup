@@ -507,7 +507,7 @@ static int edit(void)
 
 static void version(void)
 {
-#define VERSION "1.15"
+#define VERSION "1.16"
 
     printf("backup version %s%s%s\n", FMT_HIGHLIGHT, VERSION, FMT_RESET);
 }
@@ -518,7 +518,7 @@ static void usage(void)
 #define COPYRIGHT 0xA9
 
     printf(
-	"usage:	%sbackup < -e | -b [ conf_file ] | -h >%s\n"
+	"usage:	%sbackup < -e | -b [ conf_file ] | -v | -h >%s\n"
 	"   where\n"
 	"   %s-e%s  Edit the configuration file.\n"
 	"	Enter the full paths to directories or files you wish to "
