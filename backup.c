@@ -199,7 +199,8 @@ static int cp_file(FILE *to, FILE *from)
 	fputs(line, to);
 	bzero(line, MAX_PATH_LN);
     }
-    return fseek(to, 0, SEEK_SET);
+
+    return (fseek(from, 0, SEEK_SET) || fseek(to, 0, SEEK_SET));
 }
 
 static int sys_exec(char *format, ...)
@@ -292,8 +293,8 @@ static int create_backup_dir(void)
 
 static int cp_to_budir(void)
 {
-    FILE *tmp = NULL, *cnf = NULL;
-    char path[MAX_PATH_LN], *pptr = NULL;
+    FILE *tmp = NULL, *cnf = NULL, *bck = NULL;
+    char path[MAX_PATH_LN], backup_conf_bck[MAX_PATH_LN], *pptr = NULL;
     struct stat buf;
     path_t *cp_paths = NULL, **cur_path = &cp_paths;
 
@@ -304,12 +305,25 @@ static int cp_to_budir(void)
 	return -1;
     }
 
+    /* open bck FILE */
+    snprintf(backup_conf_bck, MAX_PATH_LN, "%s.BCK", backup_conf);
+    if (!(bck = fopen(backup_conf_bck, "w+")))
+    {
+	error("fopen(%s, \"w+\")", backup_conf_bck);
+	return -1;
+    }
+
     /* open tmp FILE */
     if (!(tmp = tmpfile()))
     {
 	error("tmpfile()");
 	return -1;
     }
+
+    /* copy conf file to backup file in case of program termination while conf
+     * file is being manipulated */
+    cp_file(bck, cnf);
+    fclose(bck);
 
     /* copy conf file to tmp file and create a new conf file */
     cp_file(tmp, cnf);
@@ -373,6 +387,12 @@ static int cp_to_budir(void)
 
     fclose(tmp);
     fclose(cnf);
+    /* conf file manipulation completed - no more need for backup */
+    if (sys_exec("rm -f %s", backup_conf_bck))
+    {
+	error("rm -f %s", backup_conf_bck);
+	return -1;
+    }
 
     cur_path = &cp_paths;
     while (*cur_path)
@@ -507,7 +527,7 @@ static int edit(void)
 
 static void version(void)
 {
-#define VERSION "1.16"
+#define VERSION "1.17"
 
     printf("backup version %s%s%s\n", FMT_HIGHLIGHT, VERSION, FMT_RESET);
 }
