@@ -23,6 +23,15 @@
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 #define MAX_PATH_LN 256
 
+#define CHAR_SP 0x20
+#define CHAR_TAB 0x9 
+#define CHAR_NL 0xA
+#define CHAR_HS 0X23
+#define NEWLINE(X) ((X) == CHAR_NL)
+#define HASH(X) ((X) == CHAR_HS)
+#define WHITESPACE(X) (((X) == CHAR_SP) || ((X)== CHAR_TAB))
+#define WHITELINE(X) (NEWLINE(X) || HASH(X))
+
 static char *home_dir;
 static char backup_tar_gz[MAX_PATH_LN];
 static char working_dir[MAX_PATH_LN];
@@ -74,11 +83,30 @@ static int add_newline(char *str)
     return 1;
 }
 
+static int is_whiteline(char *line, int len)
+{
+    int i = 0;
+
+    while (i < len && WHITESPACE(line[i]))
+	i++;
+    if (i == len)
+	return 1;
+    return WHITELINE(line[i]) ? 1: 0;
+}
+
+static char *del_leading_white(char *path, int len)
+{
+    char *c_tmp = path;
+
+    while (path && path - c_tmp < len && WHITESPACE(*path))
+	path++;
+    return path;
+}
+
 static int del_obsolete_entry(char *path)
 {
 #define YES "yes"
 #define NO "no"
-#define NEWLINE '\n'
 #define INPUT_SZ 5 /* strlen(MAX(YES, NO)) + strlen("\n") + 1(null terminator) */
 
     char ans[INPUT_SZ];
@@ -95,9 +123,10 @@ static int del_obsolete_entry(char *path)
 	!((MAX(strlen(ans), strlen(NO)) == strlen(NO)) &&
 	 !strncasecmp(ans, NO, MIN(strlen(ans), strlen(NO)))))
     {
-	/* if a NEWLINE was not encountered, it must be removed from stdin */
+	/* if a newline was not encountered,
+	 * it must be found and removed from stdin */
 	if (!modified)
-	    while(fgetc(stdin) != NEWLINE);
+	    while(!NEWLINE(fgetc(stdin)));
 	bzero(ans, INPUT_SZ);
 	printf("Please answer Y[es] or n[o]: ");
 	fgets(ans, INPUT_SZ, stdin);
@@ -106,7 +135,7 @@ static int del_obsolete_entry(char *path)
 
     switch (*ans)
     {
-	case 0: /* a NEWLINE was replaced by the null terminator */
+	case 0: /* a newline was replaced by the null terminator */
 	case 'y':
 	case 'Y':
 	    ret = 1;
@@ -164,10 +193,6 @@ static int sys_exec(char *format, ...)
 	return -1;
 
     return 0;
-}
-
-static void cleanup(void)
-{
 }
 
 static int init(void)
@@ -230,7 +255,7 @@ static int create_backup_dir(void)
 static int cp_to_budir(void)
 {
     FILE *tmp = NULL, *cnf = NULL;
-    char path[MAX_PATH_LN];
+    char path[MAX_PATH_LN], *pptr = NULL;
     struct stat buf;
 
     /* open cnf FILE */
@@ -267,19 +292,27 @@ static int cp_to_budir(void)
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, tmp))
     {
-	remove_newline(path);
-	if (stat(path, &buf) == -1)
+	if (is_whiteline(path, MAX_PATH_LN))
+	{
+	    fputs(path, cnf);
+	    bzero(path, MAX_PATH_LN);
+	    continue;
+	}
+
+	pptr = del_leading_white(path, MAX_PATH_LN);
+	remove_newline(pptr);
+	if (stat(pptr, &buf) == -1)
 	{
 	    if (errno != ENOENT)
 	    {
-		error("stat(%s, &buf), continuing...", path);
+		error("stat(%s, &buf), continuing...", pptr);
 		bzero(path, MAX_PATH_LN);
 		continue;
 	    }
 	    /* copy a non statted (non existant) path to new conf */
-	    if (!del_obsolete_entry(path))
+	    if (!del_obsolete_entry(pptr))
 	    {
-		add_newline(path);
+		add_newline(pptr);
 		fputs(path, cnf);
 		bzero(path, MAX_PATH_LN);
 		continue;
@@ -289,12 +322,9 @@ static int cp_to_budir(void)
 	    continue;
 	}
 
-	if (sys_exec("cp -r --parents %s %s", path, backup_dir))
-	{
-	    cleanup();
+	if (sys_exec("cp -r --parents %s %s", pptr, backup_dir))
 	    return -1;
-	}
-	add_newline(path);
+	add_newline(pptr);
 	fputs(path, cnf);
 	bzero(path, MAX_PATH_LN);
     }
