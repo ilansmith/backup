@@ -18,6 +18,7 @@
 #define ACT_EDIT 1
 #define ACT_HELP 2
 #define ACT_ERROR 3
+#define ACT_EXIT 4
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
@@ -292,6 +293,7 @@ static int cp_to_budir(void)
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, tmp))
     {
+	/* test if line is either whitespaces only or a comment */
 	if (is_whiteline(path, MAX_PATH_LN))
 	{
 	    fputs(path, cnf);
@@ -299,6 +301,7 @@ static int cp_to_budir(void)
 	    continue;
 	}
 
+	/* line is not whitespaces only or a comment */
 	pptr = del_leading_white(path, MAX_PATH_LN);
 	remove_newline(pptr);
 	if (stat(pptr, &buf) == -1)
@@ -349,25 +352,42 @@ static int remove_backup_dir(void)
     return 0;
 }
 
+static int optional_backup_conf(char *file_name)
+{
+    struct stat s;
+
+    if ((stat(file_name, &s) == -1) || (snprintf(backup_conf, MAX_PATH_LN, 
+	"%s", file_name) < 0))
+    {
+	error("file %s does not exit", file_name);
+	return -1;
+    }
+    return 0;
+}
+
 static int get_args(int argc, char *argv[])
 {
-#define ARG_EL "beh" /* TODO: v(verbose), h(help) */
+#define ARG_EL "b::eh" /* TODO: v(verbose), h(help) */
 
     int ret;
 
-    if (argc != 2)
+/*    if (argc != 2)
 	return ACT_ERROR;
-
+*/
     switch ((char)getopt(argc, argv, ARG_EL))
     {
 	case 'b':
-	    ret = ACT_BACKUP;
+	    ret = (argc <= 3) ? ACT_BACKUP : ACT_ERROR;
+	    if (argc == 2)
+		break;
+	    if (optional_backup_conf(argv[2]))
+		ret = ACT_EXIT;
 	    break;
 	case 'e':
-	    ret = ACT_EDIT;
+	    ret = (argc == 2) ? ACT_EDIT : ACT_ERROR;
 	    break;
 	case 'h':
-	    ret = ACT_HELP;
+	    ret = (argc == 2) ? ACT_HELP : ACT_ERROR;
 	    break;
 	default:
 	    ret = ACT_ERROR;
@@ -441,7 +461,7 @@ static void usage(void)
 #define COPYRIGHT 0xA9
 
     printf(
-	"usage:	%sbackup < -e | -b | -h >%s\n"
+	"usage:	%sbackup < -e | -b [ conf_file ] | -h >%s\n"
 	"   where\n"
 	"   %s-e%s  Edit the configuration file.\n"
 	"	Enter the full paths to directories or files you wish to "
@@ -460,10 +480,13 @@ static void usage(void)
 	"	of your choice. If %sDIFFPROG%s is not set, %sbackup%s will "
 	"use %sGNU \n"
 	"	diff%s.\n"
-	"   %s-b%s  Backup the files and directories mentioned in the \n"
-	"	configuration file. The gzipped tarball %sbackup.tar.gz%s\n"
-	"	containing the backed up files will be placed in the \n"
-	"	working directory.\n"
+	"   %s-b%s  Backup the files and directories mentioned in the "
+	"configuration file.\n"
+	"	backup uses the default configuration file (%s) \n"
+	"	unless a %sconf_file%s is stated specifically. \n"
+	"	The gzipped tarball %sbackup.tar.gz%s containing the backed "
+	"up files\n"
+	"	will be placed in the working directory.\n"
 	"   %s-h%s  Print this message and exit.\n"
 	"\n%s%c IAS Software, October 2004%s\n",
 	FMT_HIGHLIGHT, FMT_RESET,
@@ -476,6 +499,8 @@ static void usage(void)
 	FMT_UNDERLINE, FMT_RESET,
 	FMT_UNDERLINE, FMT_RESET, FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
+	backup_conf,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
@@ -498,8 +523,10 @@ int main(int argc, char *argv[])
 	case ACT_HELP:
 	    usage();
 	    break;
-	default:
+	case ACT_ERROR:
 	    error("try 'backup -h' for more information");
+	    break;
+	default:
 	    break;
     }
     return ret;
