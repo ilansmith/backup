@@ -527,11 +527,16 @@ static int edit(void)
 
 static void version(void)
 {
+#define VER_LENGTH 32
+    char ver[VER_LENGTH];
+
 #ifdef VERSION
-    printf("backup version %s%.2f%s\n", FMT_HIGHLIGHT, VERSION, FMT_RESET);
+    snprintf(ver, VER_LENGTH, "%.4g", VERSION);
 #else
-    printf("no version data is available\n");
+    snprintf(ver, VER_LENGTH, "no data is available");
 #endif
+
+    printf("backup version: %s\n", ver);
 }
 
 
