@@ -6,6 +6,12 @@ backup: backup.o
 backup.o: backup.c
 	gcc -g -Wall -o $@ -c $<
 
+install:
+	cp $(PROG) ~/bin
+
+uninstall:
+	rm -f ~/bin/$(PROG)
+	
 clean:
 	rm -rf *.o
 
