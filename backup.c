@@ -71,7 +71,7 @@
 #define MAX_PATH_LN 256
 
 static char *home_dir;
-static char *backup_tar = "backup.tar";
+static char *backup_tar_gz = "backup.tar.gz";
 static char backup_dir[MAX_PATH_LN];
 static char backup_conf[MAX_PATH_LN];
 
@@ -224,7 +224,6 @@ static int del_obsolete_entry(char *path)
 static int cp_file(FILE *to, FILE *from)
 {
     char line[MAX_PATH_LN];
-    struct stat buf;
 
     bzero(line, MAX_PATH_LN);
     while (fgets(line, MAX_PATH_LN, from))
@@ -307,7 +306,7 @@ static int cp_to_budir(void)
 	return -1;
     }
 
-    /* copy backup destinations to $HOME/.backup and create new conf file */
+    /* copy backup destinations to $HOME/backup and create new conf file */
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, tmp))
     {
@@ -343,8 +342,8 @@ static int cp_to_budir(void)
 	bzero(path, MAX_PATH_LN);
     }
 
-Exit:
     fclose(tmp);
+    fclose(cnf);
     return 0;
 }
 
@@ -353,20 +352,53 @@ static int init(void)
     home_dir = getenv(ENV_HOME);
 
     if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0)
-	|| (snprintf(backup_dir, MAX_PATH_LN, "%s/.backup", home_dir) < 0))
+	|| (snprintf(backup_dir, MAX_PATH_LN, "%s/backup", home_dir) < 0))
     {
 	return -1;
     }
     return 0;
 }
 
-int main(int argc, char *argv[])
+static int make_tar_gz()
+{
+    char cwd[MAX_PATH_LN], tar_file[MAX_PATH_LN];
+
+    bzero(cwd, MAX_PATH_LN);
+    if (!getcwd(cwd, MAX_PATH_LN))
+    {
+	error("getcwd()");
+	return -1;
+    }
+
+    bzero(tar_file, MAX_PATH_LN);
+    if (snprintf(tar_file, MAX_PATH_LN, "%s/%s", cwd, backup_tar_gz) < 0)
+    {
+	error("snprintf()");
+	return -1;
+    }
+
+    if (chdir(home_dir))
+	return -1;
+    if (sys_exec("tar czf %s %s", tar_file, "backup"))
+	return -1;
+    if (chdir(cwd))
+	return -1;
+    return 0;
+}
+
+static int make_backup()
 {
     init();
     create_backup_dir();
     cp_to_budir();
+    make_tar_gz();
 //    remove_backup_dir();
 
+    return 0;
+}
 
+int main(int argc, char *argv[])
+{
+    make_backup();
     return 0;
 }
