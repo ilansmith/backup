@@ -1,10 +1,12 @@
 PROG=backup
+FILE=CVS/Entries
+VER=$(shell awk -F/ '/$(PROG)/ { print $$3 }' $(FILE))
 
 backup: backup.o
 	gcc -g -Wall -o $(PROG) $<
 
 backup.o: backup.c
-	gcc -g -Wall -o $@ -c $<
+	gcc -g -Wall -o $@ -DVERSION=$(VER) -c $<
 
 install:
 	cp $(PROG) ~/bin
