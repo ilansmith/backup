@@ -39,6 +39,38 @@ static char working_dir[MAX_PATH_LN];
 static char backup_dir[MAX_PATH_LN];
 static char backup_conf[MAX_PATH_LN];
 
+typedef struct path_t {
+    char *str;
+    struct path_t *next;
+} path_t;
+
+static path_t *path_alloc(char *str)
+{
+    path_t *ptr = NULL;
+    int len = strlen(str) + 1;
+
+    if (!(ptr = (path_t *)calloc(1, sizeof(path_t))))
+	return NULL;
+    if (!(ptr->str = (char *)calloc(len, sizeof(char))))
+    {
+	free(ptr);
+	return NULL;
+    }
+
+    snprintf(ptr->str, len, str);
+    return ptr;
+}
+
+static void path_free(path_t *ptr)
+{
+    if (ptr)
+    {
+	if (ptr->str)
+	    free(ptr->str);
+	free(ptr);
+    }
+}
+
 static int error(char *fmt, ...)
 {
 #define MAX_ERR_LN 256
@@ -258,6 +290,7 @@ static int cp_to_budir(void)
     FILE *tmp = NULL, *cnf = NULL;
     char path[MAX_PATH_LN], *pptr = NULL;
     struct stat buf;
+    path_t *cp_paths = NULL, **cur_path = &cp_paths;
 
     /* open cnf FILE */
     if (!(cnf = fopen(backup_conf, "r+")))
@@ -325,8 +358,9 @@ static int cp_to_budir(void)
 	    continue;
 	}
 
-	if (sys_exec("cp -r --parents %s %s", pptr, backup_dir))
+	if (!(*cur_path = path_alloc(pptr)))
 	    return -1;
+	cur_path = &((*cur_path)->next);
 	add_newline(pptr);
 	fputs(path, cnf);
 	bzero(path, MAX_PATH_LN);
@@ -334,6 +368,16 @@ static int cp_to_budir(void)
 
     fclose(tmp);
     fclose(cnf);
+
+    cur_path = &cp_paths;
+    while (*cur_path)
+    {
+	if (sys_exec("cp -r --parents %s %s", (*cur_path)->str, backup_dir))
+	    return -1;
+	cur_path = &(cp_paths->next);
+	path_free(cp_paths);
+	cp_paths = *cur_path;
+    }
     return 0;
 }
 
