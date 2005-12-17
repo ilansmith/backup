@@ -14,12 +14,13 @@
 #define ENV_EDITOR "EDITOR"
 #define ENV_DIFFPROG "DIFFPROG"
 
-#define ACT_BACKUP 0
-#define ACT_EDIT 1
-#define	ACT_VERSION 2
-#define ACT_HELP 3
-#define ACT_ERROR 4
-#define ACT_EXIT 5
+#define ACT_BACKUP 1<<0
+#define ACT_EDIT 1<<1
+#define	ACT_VERSION 1<<2
+#define ACT_HELP 1<<3
+#define ACT_ERROR 1<<4
+#define ACT_EXIT 1<<5
+#define ACT_FORCE 1<<6
 
 #define FMT_HIGHLIGHT "\033[1;38m"
 #define FMT_UNDERLINE "\033[4;38m"
@@ -43,6 +44,7 @@ static char backup_tar_gz[MAX_PATH_LN];
 static char working_dir[MAX_PATH_LN];
 static char backup_dir[MAX_PATH_LN];
 static char backup_conf[MAX_PATH_LN];
+static int supress_conf_cleanup;
 
 typedef struct path_t {
     char *str;
@@ -203,7 +205,7 @@ static int cp_file(FILE *to, FILE *from)
     return (fseek(from, 0, SEEK_SET) || fseek(to, 0, SEEK_SET));
 }
 
-static int handler_conf_gen(int val, char *path, void **data)
+static int handler_conf_cleanup(int val, char *path, void **data)
 {
     FILE *cnf = *((FILE **)data);
     char *pptr = NULL;
@@ -217,7 +219,7 @@ static int handler_conf_gen(int val, char *path, void **data)
 	goto Exit;
     }
 
-    if (val == -1 && del_obsolete_entry(pptr))
+    if (!supress_conf_cleanup && val == -1 && del_obsolete_entry(pptr))
 	goto Exit;;
 
     fputs(path, cnf);
@@ -226,7 +228,7 @@ Exit:
     return 0;
 }
 
-static int handler_targets_gen(int val, char *path, void **data)
+static int handler_paths_create(int val, char *path, void **data)
 {
     path_t *new;
     int ret = 0;
@@ -247,7 +249,7 @@ Exit:
 
 }
 
-static int handle_file_gen(FILE *f, int(* handler)(int val, char *path, 
+static int file_process_generic(FILE *f, int(* handler)(int val, char *path, 
     void **data), void **data)
 {
     char path[MAX_PATH_LN], *pptr = NULL;
@@ -317,7 +319,7 @@ static int conf_cleanup(FILE *cnf)
 	return -1;
     }
     /* copy backup destinations to backup_dir and create new conf file */
-    handle_file_gen(tmp, handler_conf_gen, (void **)&cnf);
+    file_process_generic(tmp, handler_conf_cleanup, (void **)&cnf);
     fclose(tmp);
     fseek(cnf, 0, SEEK_SET);
     if (remove(backup_conf_bck))
@@ -430,7 +432,7 @@ static int cp_to_budir(void)
     }
     conf_cleanup(cnf);
     /* conf file manipulation completed - no more need for backup */
-    handle_file_gen(cnf, handler_targets_gen, (void **)&cp_paths);
+    file_process_generic(cnf, handler_paths_create, (void **)&cp_paths);
     fclose(cnf);
 
     while (cp_paths)
@@ -476,34 +478,58 @@ static int optional_backup_conf(char *file_name)
 
 static int get_args(int argc, char *argv[])
 {
-#define ARG_EL "b::evh" /* TODO: v(verbose), h(help) */
+#define ARG_EL "b::evhf"
 
-    int ret;
+    unsigned int ret = 0;
+    char opt;
 
-/*    if (argc != 2)
-	return ACT_ERROR;
-*/
-    switch ((char)getopt(argc, argv, ARG_EL))
+    while ((opt = (char)getopt(argc, argv, ARG_EL)) != -1)
     {
+	switch (opt)
+	{
 	case 'b':
-	    ret = (argc <= 3) ? ACT_BACKUP : ACT_ERROR;
-	    if (argc == 2)
-		break;
-	    if (optional_backup_conf(argv[2]))
-		ret = ACT_EXIT;
+	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
+		ret & ACT_VERSION)
+	    {
+		return ACT_ERROR;
+	    }
+	    if (optarg && optional_backup_conf(optarg))
+		return ACT_EXIT;
+	    ret |= ACT_BACKUP;
 	    break;
 	case 'e':
-	    ret = (argc == 2) ? ACT_EDIT : ACT_ERROR;
+	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
+		ret & ACT_VERSION)
+	    {
+		return ACT_ERROR;
+	    }
+	    ret |= ACT_EDIT;
 	    break;
 	case 'v':
-	    ret = (argc == 2) ? ACT_VERSION : ACT_ERROR;
+	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
+		ret & ACT_VERSION)
+	    {
+		return ACT_ERROR;
+	    }
+	    ret |= ACT_VERSION;
 	    break;
 	case 'h':
-	    ret = (argc == 2) ? ACT_HELP : ACT_ERROR;
+	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
+		ret & ACT_VERSION)
+	    {
+		return ACT_ERROR;
+	    }
+	    ret |= ACT_HELP;
+	    break;
+	case 'f':
+	    if (supress_conf_cleanup || ret & ACT_HELP || ret & ACT_VERSION)
+		return ACT_ERROR;
+	    supress_conf_cleanup = 1;
 	    break;
 	default:
-	    ret = ACT_ERROR;
+	    return ACT_ERROR;
 	    break;
+	}
     }
     return ret;
 }
@@ -579,13 +605,13 @@ static void version(void)
     printf("backup version: %s\n", ver);
 }
 
-
 static void usage(void)
 {
 #define COPYRIGHT 0xA9
 
     printf(
-	"usage:	%sbackup < -e | -b [ conf_file ] | -v | -h >%s\n"
+	"usage:	%sbackup < -e | -b [ conf_file ] > [ -f ]%s\n"
+	"      	%sbackup < -v | -h >%s\n"
 	"   where\n"
 	"   %s-e%s  Edit the configuration file.\n"
 	"	Enter the full paths to directories or files you wish to "
@@ -611,9 +637,12 @@ static void usage(void)
 	"	The gzipped tarball %sbackup.tar.gz%s containing the backed "
 	"up files\n"
 	"	will be placed in the working directory.\n"
+	"   %s-f%s  Do not prompt to clean configuration file of redundent "
+	"paths.\n"
 	"   %s-v%s  Display %sbackup%s version.\n"
 	"   %s-h%s  Print this message and exit.\n"
 	"\n%s%c IAS Software, October 2004%s\n",
+	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
@@ -626,6 +655,7 @@ static void usage(void)
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	backup_conf,
+	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
