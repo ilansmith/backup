@@ -279,7 +279,7 @@ static int file_process_generic(FILE *f, int(* handler)(int is_exist,
 	/* line is not whitespaces only or a comment */
 	pptr = del_leading_white(path, MAX_PATH_LN);
 	remove_newline(pptr);
-	if ((is_exist = !stat(pptr, &st)) && errno != ENOENT)
+	if (!(is_exist = !stat(pptr, &st)) && errno != ENOENT)
 	{
 	    error("stat(%s, &st), continuing...", pptr);
 	    bzero(path, MAX_PATH_LN);

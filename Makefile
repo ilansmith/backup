@@ -1,6 +1,7 @@
 PROG=backup
 FILE=CVS/Entries
-TAG_STR=$(shell awk -F/ '/Makefile/ { print $6 }' CVS/Entries | grep Ttag-)
+FILE_EXISTS=[ -n "`stat $(FILE) 2>&1 | grep -i "no such file or directory"`" ]
+TAG_STR=$(shell $(FILE_EXISTS) || awk -F/ '/Makefile/ { print $6 }' $(FILE) | grep Ttag-)
 CFLAGS=-g -Wall -Werror
 
 ifneq ($(TAG_STR),)
