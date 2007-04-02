@@ -587,9 +587,9 @@ static int edit(void)
     snprintf(backup_conf_old, MAX_PATH_LN, "%s.old", backup_conf);
 
     is_new = stat(backup_conf, &st) == -1 ? 1 : 0;
-    if (!(cnf = fopen(backup_conf, "r+")))
+    if (!(cnf = fopen(backup_conf, "a+")))
     {
-	error("fopen(%s, \"r+\")", backup_conf);
+	error("fopen(%s, \"a+\")", backup_conf);
 	return -1;
     }
     if (!(old = fopen(backup_conf_old, "w+")))
