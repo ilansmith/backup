@@ -99,7 +99,7 @@ static path_t *path_alloc(char *str)
 	return NULL;
     }
 
-    snprintf(ptr->str, len, str);
+    snprintf(ptr->str, len, "%s", str);
     return ptr;
 }
 
