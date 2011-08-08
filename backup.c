@@ -45,6 +45,7 @@
 #define IS_WHITE_PREFIX(_x_) (!(_x_) || IS_HASH(_x_) || IS_NEWLINE(_x_))
 
 /* print an error message */
+#if defined(DEBUG)
 #define ERROR(_fmt_, ...) \
     do \
     { \
@@ -53,6 +54,13 @@
             __LINE__, __FUNCTION__); \
         PrintError(errPrefix, "", _fmt_, ##__VA_ARGS__); \
     } while (0)
+#else
+#define ERROR(_fmt_, ...) \
+    do \
+    { \
+        PrintError("", "", _fmt_, ##__VA_ARGS__); \
+    } while (0)
+#endif
 
 /* verify an external application used by backup exists. If it doesn't, abort */
 #define TEST_EXTERNAL_APP_EXISTS(_app_, ...) \
@@ -801,6 +809,18 @@ static void Usage(char *pAppPath)
          pAppName, pAppName); 
 }
 
+static int ExecRootOnly(int (*pFunc)(void))
+{
+    if (getuid())
+    {
+        ERROR("Permission denied (must run as root)");
+        return -1;
+    }
+
+    /* execute as root */
+    return pFunc();
+}
+
 int main(int argc, char *argv[])
 {
     int ret = 0;
@@ -810,10 +830,10 @@ int main(int argc, char *argv[])
     switch (GetArgs(argc, argv))
     {
         case BACKUP_ERR_BACKUP:
-            ret = Backup();
+            ret = ExecRootOnly(Backup);
             break;
         case BACKUP_ERR_EDIT:
-            ret = Edit();
+            ret = ExecRootOnly(Edit);
             break;
         case BACKUP_ERR_VERSION:
             Version();

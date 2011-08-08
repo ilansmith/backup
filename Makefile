@@ -16,6 +16,10 @@ VER=$(shell [ -z "$(TAG_STR)" ] || awk -F/ '/Makefile/ { print $$6 }' $(FILE) |\
 DFLAGS+=-DVERSION=$(VER)
 endif
 
+ifeq ($(DEBUG),y)
+    CFLAGS+=-DDEBUG
+endif
+
 $(PROG): backup.o
 	$(LD) -o $(PROG) $<
 
