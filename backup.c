@@ -527,9 +527,11 @@ static int edit(void)
 
 static void version(void)
 {
-#define VERSION "1.17"
-
-    printf("backup version %s%s%s\n", FMT_HIGHLIGHT, VERSION, FMT_RESET);
+#ifdef VERSION
+    printf("backup version %s%.2f%s\n", FMT_HIGHLIGHT, VERSION, FMT_RESET);
+#else
+    printf("no version data is available\n");
+#endif
 }
 
 
