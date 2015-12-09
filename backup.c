@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/types.h>
 #include <stdarg.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -519,6 +520,7 @@ static int create_backup_dir(void)
 static int copy_to_backup_dir(void)
 {
 	path_t *cp_paths = NULL;
+	int ret = 0;
 
 	conf_cleanup(); /* XXX handle errors */
 	paths_create(&cp_paths); /* XXX handle errors */
@@ -528,33 +530,34 @@ static int copy_to_backup_dir(void)
 	while (cp_paths) {
 		path_t *tmp;
 
-		if (sys_exec("cp -r --parents %s %s",
+		if (sys_exec("cp -pr --parents %s %s",
 			cp_paths->str, backup_dir)) {
-			ERROR("cp -r --parents %s %s", cp_paths->str,
+			ERROR("cp -pr --parents %s %s", cp_paths->str,
 				backup_dir);
+			ret = -1;
 		}
 		tmp = cp_paths;
 		cp_paths = cp_paths->next;
 		path_free(tmp);
 	}
 
-	return 0;
+	return ret;
 }
 
 /* make a *.gar.gz of the temporary backup directory */
 static int make_tar_gz(void)
 {
-	return sys_exec("cd %s && tar czf %s .", backup_dir, backup_tar_gz) ? 
-		-1 : 0;
+	if (sys_exec("cd %s && tar czfp %s .", backup_dir, backup_tar_gz))
+		return -1;
+
+	printf("done: " TEXT_HIGHLIGHT("%s") "\n", backup_tar_gz);
+	return 0;
 }
 
 /* remove the backup directory */
 static int remove_backup_dir(void)
 {
-	if (sys_exec("rm -rf %s", backup_dir))
-		return -1;
-	printf("done: " TEXT_HIGHLIGHT("%s") "\n", backup_tar_gz);
-	return 0;
+	return sys_exec("rm -rf %s", backup_dir) ? -1 : 0;
 }
 
 /* test if a configuration file stated explicitly by the user exists */
@@ -801,17 +804,6 @@ static void usage(char *app_path)
 		backup_conf, app_name, app_name); 
 }
 
-static int exec_root_only(int (*func)(void))
-{
-	if (getuid()) {
-		ERROR("Permission denied (must run as root)");
-		return -1;
-	}
-
-	/* execute as root */
-	return func();
-}
-
 int main(int argc, char *argv[])
 {
 	int ret = 0;
@@ -820,10 +812,10 @@ int main(int argc, char *argv[])
 
 	switch (get_args(argc, argv)) {
 	case BACKUP_ERR_BACKUP:
-		ret = exec_root_only(backup);
+		ret = backup();
 		break;
 	case BACKUP_ERR_EDIT:
-		ret = exec_root_only(edit);
+		ret = edit();
 		break;
 	case BACKUP_ERR_VERSION:
 		version();

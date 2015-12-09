@@ -24,12 +24,6 @@ $(PROG): backup.o
 backup.o: backup.c
 	$(CC) $(CFLAGS) -o $@ -c $<
 
-install:
-	install $(PROG) $(INSTALL_PATH)
-
-uninstall:
-	rm -f $(INSTALL_PATH)/$(PROG)
-
 clean:
 	rm -rf *.o
 
