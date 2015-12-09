@@ -123,10 +123,9 @@ static int add_newline(char *str)
 
 static int is_whiteline(char *line, int len)
 {
-    int i = 0;
+    int i;
 
-    while (i < len && WHITESPACE(line[i]))
-	i++;
+    for (i = 0; i < len && WHITESPACE(line[i]); i++);
     if (i == len)
 	return 1;
     return WHITELINE(line[i]) ? 1: 0;
@@ -145,7 +144,8 @@ static int del_obsolete_entry(char *path)
 {
 #define YES "yes"
 #define NO "no"
-#define INPUT_SZ 5 /* strlen(MAX(YES, NO)) + strlen("\n") + 1(null terminator) */
+/* strlen(MAX(YES, NO)) + strlen("\n") + 1(null terminator) */
+#define INPUT_SZ 5
 
     char ans[INPUT_SZ];
     int ret = 0, modified = 0;
@@ -201,6 +201,132 @@ static int cp_file(FILE *to, FILE *from)
     }
 
     return (fseek(from, 0, SEEK_SET) || fseek(to, 0, SEEK_SET));
+}
+
+static int handler_conf_gen(int val, char *path, void **data)
+{
+    FILE *cnf = *((FILE **)data);
+    char *pptr = NULL;
+
+    add_newline(path);
+    pptr = del_leading_white(path, MAX_PATH_LN);
+    if (is_whiteline(path, MAX_PATH_LN))
+    {
+	/* if line is either whitespaces only or a comment insert it */
+	fputs(path, cnf);
+	goto Exit;
+    }
+
+    if (val == -1 && del_obsolete_entry(pptr))
+	goto Exit;;
+
+    fputs(path, cnf);
+
+Exit:
+    return 0;
+}
+
+static int handler_targets_gen(int val, char *path, void **data)
+{
+    path_t *new;
+    int ret = 0;
+
+    if (val == -1)
+	goto Exit;
+
+    if (!(new = path_alloc(del_leading_white(path, MAX_PATH_LN))))
+    {
+	ret = -1;
+	goto Exit;
+    }
+    new->next = *((path_t **)data);
+    *data = new;
+
+Exit:
+    return ret;
+
+}
+
+static int handle_file_gen(FILE *f, int(* handler)(int val, char *path, 
+    void **data), void **data)
+{
+    char path[MAX_PATH_LN], *pptr = NULL;
+    struct stat buf;
+
+    bzero(path, MAX_PATH_LN);
+    while (fgets(path, MAX_PATH_LN, f))
+    {
+	int val;
+
+	/* line is not whitespaces only or a comment */
+	pptr = del_leading_white(path, MAX_PATH_LN);
+	remove_newline(pptr);
+	val = stat(pptr, &buf); 
+	if (val == -1 && errno != ENOENT)
+	{
+	    error("stat(%s, &buf), continuing...", pptr);
+	    bzero(path, MAX_PATH_LN);
+	    continue;
+	}
+
+	if (handler(val, path, data))
+	    return -1;
+	bzero(path, MAX_PATH_LN);
+    }
+    return 0;
+}
+
+static int conf_cleanup(FILE *cnf)
+{
+    char backup_conf_bck[MAX_PATH_LN];
+    FILE *tmp, *bck;
+
+    /* open tmp FILE */
+    if (!(tmp = tmpfile()))
+    {
+	error("tmpfile()");
+	return -1;
+    }
+    /* open bck FILE */
+    snprintf(backup_conf_bck, MAX_PATH_LN, "%s.bck", backup_conf);
+    if (!(bck = fopen(backup_conf_bck, "w+")))
+    {
+	error("fopen(%s, \"w+\")", backup_conf_bck);
+	fclose(tmp);
+	return -1;
+    }
+
+    /* copy conf file to backup file in case of program termination while conf
+     * file is being manipulated */
+    cp_file(bck, cnf);
+    fclose(bck);
+
+    /* copy conf file to tmp file and create a new conf file */
+    cp_file(tmp, cnf);
+    fclose(cnf);
+    if (remove(backup_conf))
+    {
+	error("remove(%s), backup_conf");
+	fclose(tmp);
+	return -1;
+    }
+    if (!(cnf = fopen(backup_conf, "w+")))
+    {
+	error("fopen(%s, \"w+\")", backup_conf);
+	fclose(tmp);
+	return -1;
+    }
+    /* copy backup destinations to backup_dir and create new conf file */
+    handle_file_gen(tmp, handler_conf_gen, (void **)&cnf);
+    fclose(tmp);
+    fseek(cnf, 0, SEEK_SET);
+    if (remove(backup_conf_bck))
+    {
+	error("remove(%s), backup_conf_bck");
+	return -1;
+    }
+
+    return 0;
 }
 
 static int sys_exec(char *format, ...)
@@ -293,10 +419,8 @@ static int create_backup_dir(void)
 
 static int cp_to_budir(void)
 {
-    FILE *tmp = NULL, *cnf = NULL, *bck = NULL;
-    char path[MAX_PATH_LN], backup_conf_bck[MAX_PATH_LN], *pptr = NULL;
-    struct stat buf;
-    path_t *cp_paths = NULL, **cur_path = &cp_paths;
+    FILE *cnf = NULL;
+    path_t *cp_paths = NULL;
 
     /* open cnf FILE */
     if (!(cnf = fopen(backup_conf, "r+")))
@@ -304,104 +428,20 @@ static int cp_to_budir(void)
 	error("fopen(%s, \"r+\")", backup_conf);
 	return -1;
     }
-
-    /* open bck FILE */
-    snprintf(backup_conf_bck, MAX_PATH_LN, "%s.BCK", backup_conf);
-    if (!(bck = fopen(backup_conf_bck, "w+")))
-    {
-	error("fopen(%s, \"w+\")", backup_conf_bck);
-	return -1;
-    }
-
-    /* open tmp FILE */
-    if (!(tmp = tmpfile()))
-    {
-	error("tmpfile()");
-	return -1;
-    }
-
-    /* copy conf file to backup file in case of program termination while conf
-     * file is being manipulated */
-    cp_file(bck, cnf);
-    fclose(bck);
-
-    /* copy conf file to tmp file and create a new conf file */
-    cp_file(tmp, cnf);
-    fclose(cnf);
-    if (remove(backup_conf))
-    {
-	error("remove()");
-	fclose(tmp);
-	return -1;
-    }
-    if (!(cnf = fopen(backup_conf, "w+")))
-    {
-	error("fopen(%s, \"w+\")", backup_conf);
-	fclose(tmp);
-	return -1;
-    }
-
-    /* copy backup destinations to backup_dir and create new conf file */
-    bzero(path, MAX_PATH_LN);
-    while (fgets(path, MAX_PATH_LN, tmp))
-    {
-	/* test if line is either whitespaces only or a comment */
-	if (is_whiteline(path, MAX_PATH_LN))
-	{
-	    fputs(path, cnf);
-	    bzero(path, MAX_PATH_LN);
-	    continue;
-	}
-
-	/* line is not whitespaces only or a comment */
-	pptr = del_leading_white(path, MAX_PATH_LN);
-	remove_newline(pptr);
-	if (stat(pptr, &buf) == -1)
-	{
-	    if (errno != ENOENT)
-	    {
-		error("stat(%s, &buf), continuing...", pptr);
-		bzero(path, MAX_PATH_LN);
-		continue;
-	    }
-	    /* copy a non statted (non existant) path to new conf */
-	    if (!del_obsolete_entry(pptr))
-	    {
-		add_newline(pptr);
-		fputs(path, cnf);
-		bzero(path, MAX_PATH_LN);
-		continue;
-	    }
-
-	    bzero(path, MAX_PATH_LN);
-	    continue;
-	}
-
-	if (!(*cur_path = path_alloc(pptr)))
-	    return -1;
-	cur_path = &((*cur_path)->next);
-	add_newline(pptr);
-	fputs(path, cnf);
-	bzero(path, MAX_PATH_LN);
-    }
-
-    fclose(tmp);
-    fclose(cnf);
+    conf_cleanup(cnf);
     /* conf file manipulation completed - no more need for backup */
-    if (sys_exec("rm -f %s", backup_conf_bck))
-    {
-	error("rm -f %s", backup_conf_bck);
-	return -1;
-    }
+    handle_file_gen(cnf, handler_targets_gen, (void **)&cp_paths);
+    fclose(cnf);
 
-    cur_path = &cp_paths;
-    while (*cur_path)
+    while (cp_paths)
     {
-	if (sys_exec("cp -r --parents %s %s", (*cur_path)->str, backup_dir))
-	    return -1;
-	cur_path = &(cp_paths->next);
-	path_free(cp_paths);
-	cp_paths = *cur_path;
+	path_t *tmp;
+
+	if (sys_exec("cp -r --parents %s %s", cp_paths->str, backup_dir))
+	    error("cp -r --parents %s %s", cp_paths->str, backup_dir);
+	tmp = cp_paths;
+	cp_paths = cp_paths->next;
+	path_free(tmp);
     }
     return 0;
 }
@@ -482,34 +522,33 @@ static int edit(void)
 {
 #define DEFAULT_EDITOR "vim"
 #define DEFAULT_DIFFPROG "diff"
-#define OPEN_NEW "w+"
-#define OPEN_EXIST "r+"
 
     char *editor = DEFAULT_EDITOR;
     char *diffprog = DEFAULT_DIFFPROG;
     char *env_var = NULL;
-    char mode[3] = OPEN_EXIST, backup_conf_tmp[MAX_PATH_LN];
-    FILE *tmp, *cnf;
+    char mode[3] = "r+", backup_conf_old[MAX_PATH_LN];
+    FILE *old, *cnf;
     struct stat buf;
     int new_file = 0;
 
-    bzero(backup_conf_tmp, MAX_PATH_LN);
-    snprintf(backup_conf_tmp, MAX_PATH_LN, "%s.tmp", backup_conf);
+    bzero(backup_conf_old, MAX_PATH_LN);
+    snprintf(backup_conf_old, MAX_PATH_LN, "%s.old", backup_conf);
 
     /* test if conf file exists, if not it must be created */
     if (stat(backup_conf, &buf) == -1)
     {
-	snprintf(mode, 3, OPEN_NEW);
+	snprintf(mode, 3, "w+");
 	new_file = 1;
     }
 
-    if (!(tmp = fopen(backup_conf_tmp, "w+")) || 
+    if (!(old = fopen(backup_conf_old, "w+")) || 
 	!(cnf = fopen(backup_conf, mode)))
     {
 	return -1;
     }
 
-    cp_file(tmp, cnf);
+    cp_file(old, cnf);
+    fclose(old);
 
     if ((env_var = getenv(ENV_EDITOR)))
 	editor = env_var;
@@ -518,10 +557,11 @@ static int edit(void)
 
     sys_exec("%s %s", editor, backup_conf);
     if (!new_file)
-	sys_exec("%s %s %s", diffprog, backup_conf, backup_conf_tmp);
-    fclose(tmp);
+	sys_exec("%s %s %s", diffprog, backup_conf_old, backup_conf);
+    remove(backup_conf_old);
+    conf_cleanup(cnf);
     fclose(cnf);
-    remove(backup_conf_tmp);
+
     return 0;
 }
 
