@@ -672,7 +672,7 @@ static void usage(void)
 	"paths.\n"
 	"   %s-v%s  Display %sbackup%s version.\n"
 	"   %s-h%s  Print this message and exit.\n"
-	"\n%s%c IAS Software, October 2004%s\n",
+	"\n%c IAS, October 2004\n",
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
@@ -692,7 +692,7 @@ static void usage(void)
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, COPYRIGHT, FMT_RESET);
+	COPYRIGHT);
 }
 
 int main(int argc, char *argv[])
