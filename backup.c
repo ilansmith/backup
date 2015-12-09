@@ -411,6 +411,7 @@ static void usage(void)
 #define FMT_UNDERLINE "\033[4;38m"
 #define FMT_RESET "\033[00;00;00m"
 #define COPYRIGHT 0xA9
+
     printf(
 	"usage:	%sbackup < -e | -b | -h >%s\n"
 	"   where\n"
