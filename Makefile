@@ -1,14 +1,21 @@
 PROG=backup
 INSTALL_PATH=/usr/bin
 FILE=CVS/Entries
-VER=$(shell awk -F/ '/$(PROG)/ { print $$3 }' $(FILE))
+TAG_STR=$(shell awk -F/ '/Makefile/ { print $6 }' CVS/Entries | grep Ttag-)
 CFLAGS=-g -Wall -Werror
+
+ifneq ($(TAG_STR),)
+VER=$(shell [ -z "$(TAG_STR)" ] || awk -F/ '/Makefile/ { print $$6 }' $(FILE) |\
+	sed 's/Ttag-//' | sed 's/_/./')
+
+DFLAGS+=-DVERSION=$(VER)
+endif
 
 backup: backup.o
 	gcc -o $(PROG) $<
 
 backup.o: backup.c
-	gcc $(CFLAGS) -o $@ -DVERSION=$(VER) -c $<
+	gcc $(CFLAGS) $(DFLAGS) -o $@ -c $<
 
 install:
 	install $(PROG) $(INSTALL_PATH)
