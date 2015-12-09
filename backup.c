@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -9,510 +10,561 @@
 #include <dirent.h>
 #include <errno.h>
 
+#define DEFAULT_EDITOR "vim"
+#define DEFAULT_DIFFPROG "diff"
+
 #define ENV_HOME "HOME"
 #define ENV_SHELL "SHELL"
 #define ENV_EDITOR "EDITOR"
 #define ENV_DIFFPROG "DIFFPROG"
 
-#define ACT_BACKUP 1<<0
-#define ACT_EDIT 1<<1
-#define	ACT_VERSION 1<<2
-#define ACT_HELP 1<<3
-#define ACT_ERROR 1<<4
-#define ACT_NOTEXIST 1<<5
+#define STR_YES "yes"
+#define STR_NO "no"
 
-#define FMT_HIGHLIGHT "\033[1m"
-#define FMT_UNDERLINE "\033[4m"
-#define FMT_ERROR "\033[0;37m"
-#define FMT_RESET "\033[00;00m"
+#define COLOR_HIGHLIGHT "\033[1m"
+#define COLOR_UNDERLINE "\033[4m"
+#define COLOR_ERROR "\033[1;31m" /* bright red */
+#define COLOR_RESET "\033[00;00m"
 
-#define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
-#define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
-#define MAX_PATH_LN 256
+#define TEXT_HIGHLIGHT(_str_) COLOR_HIGHLIGHT _str_ COLOR_RESET
+#define TEXT_UNDERLINE(_str_) COLOR_UNDERLINE _str_ COLOR_RESET
+#define TEXT_ERROR(_str_) COLOR_ERROR _str_ COLOR_RESET
+
+#define MIN(_x_, _y_) ((_x_) < (_y_) ? (_x_) : (_y_))
+#define MAX(_x_, _y_) ((_x_) < (_y_) ? (_y_) : (_x_))
+#define MAX_PATH_LEN 256
 
 #define CHAR_SP 0x20
 #define CHAR_TAB 0x9 
 #define CHAR_NL 0xA
 #define CHAR_HS 0X23
-#define IS_NEWLINE(X) ((X) == CHAR_NL)
-#define IS_HASH(X) ((X) == CHAR_HS)
-#define IS_WHITE_SPACE(X) (((X) == CHAR_SP) || ((X)== CHAR_TAB))
-#define IS_WHITE_PREFIX(X) (!(X) || IS_HASH(X) || IS_NEWLINE(X))
 
-#define error(fmt, ...) \
+#define IS_NEWLINE(_x_) ((_x_) == CHAR_NL)
+#define IS_HASH(_x_) ((_x_) == CHAR_HS)
+#define IS_WHITE_SPACE(_x_) (((_x_) == CHAR_SP) || ((_x_)== CHAR_TAB))
+#define IS_WHITE_PREFIX(_x_) (!(_x_) || IS_HASH(_x_) || IS_NEWLINE(_x_))
+
+/* print an error message */
+#define ERROR(_fmt_, ...) \
     do \
     { \
-	char err_prefix[256]; \
-	snprintf(err_prefix, sizeof(err_prefix), "%s:%d, %s(): ", __FILE__, \
-	    __LINE__, __FUNCTION__); \
-	_error(err_prefix, fmt, ##__VA_ARGS__); \
-    } \
-    while (0)
+        char errPrefix[256]; \
+        snprintf(errPrefix, sizeof(errPrefix), "%s:%d, %s(): ", __FILE__, \
+            __LINE__, __FUNCTION__); \
+        PrintError(errPrefix, "", _fmt_, ##__VA_ARGS__); \
+    } while (0)
 
-static char *home_dir;
-static char backup_tar_gz[MAX_PATH_LN];
-static char working_dir[MAX_PATH_LN];
-static char backup_dir[MAX_PATH_LN];
-static char backup_conf[MAX_PATH_LN];
-static int supress_conf_cleanup;
+/* verify an external application used by backup exists. If it doesn't, abort */
+#define TEST_EXTERNAL_APP_EXISTS(_app_, ...) \
+    do \
+    { \
+        if (SysExec("which " _app_ " > /dev/null", ##__VA_ARGS__)) \
+        { \
+            PrintError("Can't find: ", "Aborting...", _app_, ##__VA_ARGS__); \
+            exit(1); \
+        } \
+    } while (0)
 
-typedef struct path_t {
-    char *str;
-    struct path_t *next;
+#define IS_YES_NO_ANSWER(_ans_) \
+    (((MAX(strlen(_ans_), strlen(STR_YES)) == strlen(STR_YES)) && \
+    (!strncasecmp(_ans_, STR_YES, MIN(strlen(_ans_), strlen(STR_YES))))) || \
+    ((MAX(strlen(_ans_), strlen(STR_NO)) == strlen(STR_NO)) && \
+    !strncasecmp(_ans_, STR_NO, MIN(strlen(_ans_), strlen(STR_NO)))))
+
+typedef enum 
+{
+    BACKUP_ERR_BACKUP = 1<<0,
+    BACKUP_ERR_EDIT = 1<<1,
+    BACKUP_ERR_VERSION = 1<<2,
+    BACKUP_ERR_HELP = 1<<3,
+    BACKUP_ERR_ARGS = 1<<4,
+    BACKUP_ERR_NOTEXIST = 1<<5,
+} backupErr_t;
+
+typedef struct path_t 
+{
+    struct path_t *pNext;
+    char *pStr;
 } path_t;
 
-static int _error(char *err_prefix, char *fmt, ...)
+typedef int (*fileProcessingHandler_t)(int isExist, char *pPath, void **ppData);
+
+static char *gpHomeDir;
+static char gBackupTarGz[MAX_PATH_LEN];
+static char gWorkingDir[MAX_PATH_LEN];
+static char gBackupDir[MAX_PATH_LEN];
+static char gBackupConf[MAX_PATH_LEN];
+static int gSupressConfCleanup;
+
+/* common format for printing an error */
+static int PrintError(char *pErrPrefix, char *pErrSuffix, char *pFmt, ...)
 {
 #define MAX_ERR_LN 256
     va_list ap;
-    char err_str[MAX_ERR_LN];
+    char errStr[MAX_ERR_LN];
 
-    memset(err_str, 0, MAX_ERR_LN);
-    va_start(ap, fmt);
-    vsnprintf(err_str, MAX_ERR_LN, fmt, ap);
+    memset(errStr, 0, MAX_ERR_LN);
+    va_start(ap, pFmt);
+    vsnprintf(errStr, MAX_ERR_LN, pFmt, ap);
     va_end(ap);
 
-    return fprintf(stderr, "%s%s%s%s\n",FMT_ERROR, err_prefix, err_str, 
-	FMT_RESET);
+    return fprintf(stderr, "%s" TEXT_ERROR("%s") "%s%s\n", pErrPrefix, errStr, 
+        *pErrSuffix ? ". " : "", pErrSuffix);
 }
 
-static FILE *open_id(char *file, uid_t uid, gid_t gid)
+/* open a file and set its user id and group id */
+static FILE *OpenId(char *pFileName, uid_t uid, gid_t gid)
 {
-    FILE *f;
+    FILE *pFile;
 
-    if (!(f = fopen(file, "w+")))
-	return NULL;
-    chown(file, uid, gid);
-    return f;
+    if (!(pFile = fopen(pFileName, "w+")))
+        return NULL;
+
+    chown(pFileName, uid, gid);
+    return pFile;
 }
 
-static path_t *path_alloc(char *str)
+static path_t *PathAlloc(char *pStr)
 {
-    path_t *ptr = NULL;
-    int len = strlen(str) + 1;
+    path_t *pPath;
+    int len;
 
-    if (!(ptr = (path_t *)calloc(1, sizeof(path_t))))
-	return NULL;
-    if (!(ptr->str = (char *)calloc(len, sizeof(char))))
-    {
-	free(ptr);
-	return NULL;
-    }
+    if (!(pPath = (path_t*)calloc(1, sizeof(path_t))))
+        goto Error;
 
-    snprintf(ptr->str, len, "%s", str);
-    return ptr;
+    len = strlen(pStr) + 1;
+    if (!(pPath->pStr = (char*)calloc(len, sizeof(char))))
+        goto Error;
+
+    snprintf(pPath->pStr, len, "%s", pStr);
+    return pPath;
+
+Error:
+    if (pPath)
+        free(pPath);
+
+    return NULL;
 }
 
-static void path_free(path_t *ptr)
+static void PathFree(path_t *pPath)
 {
-    if (ptr)
-    {
-	if (ptr->str)
-	    free(ptr->str);
-	free(ptr);
-    }
+    if (!pPath)
+        return;
+
+    if (pPath->pStr)
+        free(pPath->pStr);
+    free(pPath);
 }
 
-/* removes a newline if it comes as the last non zero charcater in str
- * return: 0 - if the string was not modified
- *         1 - if the string was modified */
-static int remove_newline(char *str)
+/* removes a newline if it comes as the last non zero charcater in pStr
+   return: 0 - if the string was not modified
+           1 - if the string was modified */
+static int RemoveNewline(char *pStr)
 {
-    char *c = str + strlen(str) - 1;
+    char *pEol = pStr + strlen(pStr) - 1;
 
-    if (*c == '\n')
-    {
-	*c = 0;
-	return 1;
-    }
-    return 0;
-}
+    if (*pEol != '\n')
+        return 0;
 
-/* adds a newline at the end of str if a the resulting string will still be null
- * terminated.
- * return: 0 - if the string was not modified
- *         1 - if the string was modified */
-static int add_newline(char *str)
-{
-    char *c = str + strlen(str);
-
-    if (*(c + 1) != 0)
-	return 0;
-    *c = '\n';
+    *pEol = 0;
     return 1;
 }
 
-static int is_whiteline(char *line, int len)
+/* adds a newline at the end of pStr if a the resulting string will still be 
+   null terminated.
+   return: 0 - if the string was not modified
+           1 - if the string was modified */
+static int AddNewline(char *pStr)
 {
-    int i, is_wl;
+    char *pEol = pStr + strlen(pStr);
 
-    for (i = 0; i<len && !(is_wl = IS_WHITE_PREFIX(line[i])) && 
-	IS_WHITE_SPACE(line[i]); i++);
+    if (*(pEol + 1))
+        return 0;
 
-    return i == len ? -1 : is_wl;
+    *pEol = '\n';
+    return 1;
 }
 
-static char *del_leading_white(char *path, int len)
+/* test if a line in the conf file is skippable */
+static int IsWhiteline(char *pLine, int len)
 {
-    char *c_tmp = path;
+    int i, isWl;
 
-    while (path && path - c_tmp < len && IS_WHITE_SPACE(*path))
-	path++;
-    return path;
+    for (i = 0; i < len && !(isWl = IS_WHITE_PREFIX(pLine[i])) && 
+        IS_WHITE_SPACE(pLine[i]); i++);
+
+    return i == len ? 1 : isWl;
 }
 
-static int del_obsolete_entry(char *path)
+/* find the first non white space character in a path buffer */
+static char *DelLeadingWhite(char *pPath, int len)
 {
-#define YES "yes"
-#define NO "no"
-/* strlen(MAX(YES, NO)) + strlen("\n") + 1(null terminator) */
+    char *pStart = pPath;
+
+    while (pPath && pPath - pStart < len && IS_WHITE_SPACE(*pPath))
+        pPath++;
+    return pPath;
+}
+
+static int IsDelObsoleteEntry(char *pPath)
+{
 #define INPUT_SZ 5
 
     char ans[INPUT_SZ];
-    int ret, modified = 0;
+    int ret, isFirst = 1;
 
-    printf("%s%s%s does not exist...\n", FMT_HIGHLIGHT, path, FMT_RESET);
+    printf(TEXT_HIGHLIGHT("%s") " does not exist...\n", pPath);
     printf("do you want to remove it from the configuration file? [Y/n] ");
-    bzero(ans, INPUT_SZ);
-    fgets(ans, INPUT_SZ, stdin);
-    modified = remove_newline(ans);
 
-    while (!((MAX(strlen(ans), strlen(YES)) == strlen(YES)) &&
-	(!strncasecmp(ans, YES, MIN(strlen(ans), strlen(YES))))) &&
-	!((MAX(strlen(ans), strlen(NO)) == strlen(NO)) &&
-	 !strncasecmp(ans, NO, MIN(strlen(ans), strlen(NO)))))
+    /* repeat while answer provided by the user is not a case insensative 
+       substring of 'yes' or 'no' */
+    do
     {
-	/* if a newline was not encountered,
-	 * it must be found and removed from stdin */
-	if (!modified)
-	    while(!IS_NEWLINE(fgetc(stdin)));
-	bzero(ans, INPUT_SZ);
-	printf("Please answer Y[es] or n[o]: ");
-	fgets(ans, INPUT_SZ, stdin);
-	modified = remove_newline(ans);
-    }
+        int isNewlineFound;
+
+        if (!isFirst)
+            printf("Please answer Y[es] or N[o]: ");
+        else
+            isFirst = 0;
+
+        /* get user's answer */
+        bzero(ans, INPUT_SZ);
+        fgets(ans, INPUT_SZ, stdin);
+        isNewlineFound = RemoveNewline(ans);
+
+        /* if a newline was not encountered,
+           it must be found and removed from stdin */
+        if (!isNewlineFound)
+            while (!IS_NEWLINE(fgetc(stdin)));
+    } while (!IS_YES_NO_ANSWER(ans));
 
     switch (*ans)
     {
-	case 0: /* a newline was replaced by the null terminator */
-	case 'y':
-	case 'Y':
-	    ret = 1;
-	    break;
-	case 'n':
-	case 'N':
-	    ret = 0;
-	    break;
-	default:
-	    error("unreachable switch case");
-	    exit(1);
+        case 0: /* a newline was replaced by the null terminator */
+        case 'y':
+        case 'Y':
+            ret = 1;
+            break;
+        case 'n':
+        case 'N':
+            ret = 0;
+            break;
+        default:
+            ERROR("unreachable switch case");
+            exit(1);
+            break;
     }
     return ret;
 }
 
-static int cp_file(FILE *to, FILE *from)
+/* copy content from one file to another */
+static int cpFile(FILE *pTo, FILE *pFrom)
 {
-    char line[MAX_PATH_LN];
+    char line[MAX_PATH_LEN];
 
-    bzero(line, MAX_PATH_LN);
-    while (fgets(line, MAX_PATH_LN, from))
+    bzero(line, MAX_PATH_LEN);
+    while (fgets(line, MAX_PATH_LEN, pFrom))
     {
-	fputs(line, to);
-	bzero(line, MAX_PATH_LN);
+        fputs(line, pTo);
+        bzero(line, MAX_PATH_LEN);
     }
 
-    return (fseek(from, 0, SEEK_SET) || fseek(to, 0, SEEK_SET));
+    return fseek(pFrom, 0, SEEK_SET) || fseek(pTo, 0, SEEK_SET);
 }
 
-static int handler_conf_cleanup(int is_exist, char *path, void **data)
+/* configuration file cleanup callback function */
+static int HandlerConfCleanup(int isExist, char *pPath, void **ppData)
 {
-    FILE *cnf = *((FILE **)data);
-    char *pptr = NULL;
-    int is_wl = is_whiteline(path, MAX_PATH_LN);
+    FILE *pCnf = *((FILE**)ppData);
+    char *pPathPtr = NULL;
+    int isWl = IsWhiteline(pPath, MAX_PATH_LEN);
 
-    pptr = del_leading_white(path, MAX_PATH_LN);
+    pPathPtr = DelLeadingWhite(pPath, MAX_PATH_LEN);
 
-    /* XXX handle is_whiteline() == -1 */
-    if (!is_wl && !is_exist && del_obsolete_entry(pptr))
-	goto Exit;
+    if (!isWl && !isExist && IsDelObsoleteEntry(pPathPtr))
+        return 0; /* ignore this path, don't insert it in the new conf file */
 
-    add_newline(path);
-    fputs(path, cnf);
-
-Exit:
+    AddNewline(pPath);
+    fputs(pPath, pCnf);
     return 0;
 }
 
-static int handler_paths_create(int is_exist, char *path, void **data)
+/* path data structure creation callback function */
+static int HandlerPathsCreate(int isExist, char *pPath, void **ppData)
 {
-    path_t *new;
-    int ret = 0;
+    path_t *pNew;
 
-    if (!is_exist)
-	goto Exit;
+    if (!isExist)
+        return 0;
 
-    if (!(new = path_alloc(del_leading_white(path, MAX_PATH_LN))))
-    {
-	ret = -1;
-	goto Exit;
-    }
-    new->next = *((path_t **)data);
-    *data = new;
+    if (!(pNew = PathAlloc(DelLeadingWhite(pPath, MAX_PATH_LEN))))
+        return -1;
 
-Exit:
-    return ret;
+    pNew->pNext = *((path_t**)ppData);
+    *ppData = pNew;
 
+    return 0;
 }
 
-static int file_process_generic(FILE *f, int(* handler)(int is_exist, 
-    char *path, void **data), void **data)
+/* generic function for processing configuration file lines (paths) */
+static int FileProcessGeneric(FILE *pFile, fileProcessingHandler_t handler, 
+    void **ppData)
 {
-    char path[MAX_PATH_LN], *pptr = NULL;
-    struct stat st;
+    char path[MAX_PATH_LEN];
 
-    bzero(path, MAX_PATH_LN);
-    while (fgets(path, MAX_PATH_LN, f))
+    bzero(path, MAX_PATH_LEN);
+    while (fgets(path, MAX_PATH_LEN, pFile))
     {
-	int is_exist;
+        char *pPathPtr;
+        int isExist;
+        struct stat st;
 
-	/* line is not whitespaces only or a comment */
-	pptr = del_leading_white(path, MAX_PATH_LN);
-	remove_newline(pptr);
-	if (!(is_exist = !stat(pptr, &st)) && errno != ENOENT)
-	{
-	    error("stat(%s, &st), continuing...", pptr);
-	    bzero(path, MAX_PATH_LN);
-	    continue;
-	}
+        /* line is not whitespaces only or a comment */
+        pPathPtr = DelLeadingWhite(path, MAX_PATH_LEN);
+        RemoveNewline(pPathPtr);
+        if (!(isExist = !stat(pPathPtr, &st)) && errno != ENOENT)
+        {
+            ERROR("stat(%s, &st), continuing...", pPathPtr);
+            bzero(path, MAX_PATH_LEN);
+            continue;
+        }
 
-	if (handler(is_exist, path, data))
-	    return -1;
-	bzero(path, MAX_PATH_LN);
+        if (handler(isExist, path, ppData))
+            return -1;
+        bzero(path, MAX_PATH_LEN);
     }
     return 0;
 }
 
-static int conf_cleanup(void)
+/* allow user to remove stale paths from the configuration file */
+static int ConfCleanup(void)
 {
-    char backup_conf_bck[MAX_PATH_LN];
-    FILE *cnf, *tmp, *bck;
+    char backupConfBck[MAX_PATH_LEN];
+    FILE *pCnf, *pTmp, *pBck;
     struct stat st;
 
-    if (supress_conf_cleanup)
-	return 0;
+    if (gSupressConfCleanup)
+        return 0;
 
-    /* open cnf FILE */
-    if (!(cnf = fopen(backup_conf, "r+")))
+    /* open pCnf FILE */
+    if (!(pCnf = fopen(gBackupConf, "r+")))
     {
-	error("fopen(%s, \"r+\")", backup_conf);
-	return -1;
+        ERROR("fopen(%s, \"r+\")", gBackupConf);
+        return -1;
     }
-    /* open tmp FILE */
-    if (!(tmp = tmpfile()))
+    /* open pTmp FILE */
+    if (!(pTmp = tmpfile()))
     {
-	error("tmpfile()");
-	fclose(cnf);
-	return -1;
+        ERROR("tmpfile()");
+        fclose(pCnf);
+        return -1;
     }
 
-    if (stat(backup_conf, &st) == -1)
+    if (stat(gBackupConf, &st) == -1)
     {
-	error("stat(%s)", backup_conf);
-	fclose(cnf);
-	fclose(tmp);
-	return -1;
+        ERROR("stat(%s)", gBackupConf);
+        fclose(pCnf);
+        fclose(pTmp);
+        return -1;
     }
 
     /* open bck FILE */
-    snprintf(backup_conf_bck, MAX_PATH_LN, "%s.bck", backup_conf);
-    if (!(bck = open_id(backup_conf_bck, st.st_uid, st.st_gid)))
+    snprintf(backupConfBck, MAX_PATH_LEN, "%s.bck", gBackupConf);
+    if (!(pBck = OpenId(backupConfBck, st.st_uid, st.st_gid)))
     {
-	error("open_id(%s, %d, %d)", backup_conf_bck, st.st_uid, st.st_gid);
-	fclose(cnf);
-	fclose(tmp);
-	return -1;
+        ERROR("OpenId(%s, %d, %d)", backupConfBck, st.st_uid, st.st_gid);
+        fclose(pCnf);
+        fclose(pTmp);
+        return -1;
     }
 
     /* copy conf file to backup file in case of program termination while conf
-     * file is being manipulated */
-    cp_file(bck, cnf);
-    fclose(bck);
+       file is being manipulated */
+    cpFile(pBck, pCnf);
+    fclose(pBck);
 
-    /* copy conf file to tmp file and create a new conf file */
-    cp_file(tmp, cnf);
-    fclose(cnf);
-    if (remove(backup_conf))
+    /* copy conf file to pTmp file and create a new conf file */
+    cpFile(pTmp, pCnf);
+    fclose(pCnf);
+    if (remove(gBackupConf))
     {
-	error("remove(%s)", backup_conf);
-	fclose(tmp);
-	return -1;
+        ERROR("remove(%s)", gBackupConf);
+        fclose(pTmp);
+        return -1;
     }
-    if (!(cnf = open_id(backup_conf, st.st_uid, st.st_gid)))
+    if (!(pCnf = OpenId(gBackupConf, st.st_uid, st.st_gid)))
     {
-	error("open_id(%s, %d, %d)", backup_conf, st.st_uid, st.st_gid);
-	fclose(tmp);
-	return -1;
+        ERROR("OpenId(%s, %d, %d)", gBackupConf, st.st_uid, st.st_gid);
+        fclose(pTmp);
+        return -1;
     }
-    file_process_generic(tmp, handler_conf_cleanup, (void **)&cnf);
-    fclose(tmp);
-    fclose(cnf);
-    if (remove(backup_conf_bck))
-	error("remove(%s)", backup_conf_bck);
+    FileProcessGeneric(pTmp, HandlerConfCleanup, (void **)&pCnf);
+    fclose(pTmp);
+    fclose(pCnf);
+    if (remove(backupConfBck))
+        ERROR("remove(%s)", backupConfBck);
 
     return 0;
 }
 
-static int paths_create(path_t **cp_paths)
+/* build a paths linked list */
+static int PathsCreate(path_t **ppCpPaths)
 {
     int ret;
-    FILE *cnf;
+    FILE *pCnf;
 
-    /* open cnf FILE */
-    if (!(cnf = fopen(backup_conf, "r+")))
+    /* open pCnf FILE */
+    if (!(pCnf = fopen(gBackupConf, "r+")))
     {
-	error("fopen(%s, \"r+\")", backup_conf);
-	return -1;
+        ERROR("fopen(%s, \"r+\")", gBackupConf);
+        return -1;
     }
-    ret = file_process_generic(cnf, handler_paths_create, (void **)cp_paths);
-    fclose(cnf);
+    ret = FileProcessGeneric(pCnf, HandlerPathsCreate, (void**)ppCpPaths);
+    fclose(pCnf);
 
     return ret;
 }
 
-static int sys_exec(char *format, ...)
+/* system execution function */
+static int SysExec(char *pFormat, ...)
 {
-    va_list ap;
-    int ret = 0, status;
-    char *args[4];
-
-    char command[MAX_PATH_LN];
-
-    bzero(command, MAX_PATH_LN);
-    va_start(ap, format);
-    ret = vsnprintf(command, MAX_PATH_LN - 1, format, ap);
-    va_end(ap);
-
-    if (ret < 0)
-	return -1;
+    int status = 0;
 
     if (!fork()) /* child process */
     {
-	args[0] = getenv(ENV_SHELL);
-	args[1] = "-c";
-	args[2] = command;
-	args[3] = NULL;
-	execvp(args[0], args);
+        char command[MAX_PATH_LEN];
+        va_list ap;
+        int ret;
+        char *args[4];
+
+        bzero(command, MAX_PATH_LEN);
+        va_start(ap, pFormat);
+        ret = vsnprintf(command, MAX_PATH_LEN - 1, pFormat, ap);
+        va_end(ap);
+
+        if (ret < 0)
+           exit(1);
+
+        args[0] = getenv(ENV_SHELL);
+        args[1] = "-c";
+        args[2] = command;
+        args[3] = NULL;
+        execvp(args[0], args);
     }
+
     wait(&status);
-    if (ret < 0)
-	return -1;
+
+    /* fail if the child process did not exit gracefully */
+    return WIFEXITED(status) && !WEXITSTATUS(status) ? 0 : -1;
+}
+
+/* initialize global variables */
+static int Init(void)
+{
+    if (!(gpHomeDir = getenv(ENV_HOME)))
+    {
+        ERROR("getenv()");
+        return -1;
+    }
+    if (!getcwd(gWorkingDir, MAX_PATH_LEN))
+    {
+        ERROR("getcwd()");
+        return -1;
+    }
+    if ((snprintf(gBackupTarGz, MAX_PATH_LEN, "%s/backup.tar.gz", 
+        gWorkingDir)) < 0)
+    {
+        ERROR("snprintf()");
+        return -1;
+    }
+
+    if ((snprintf(gBackupConf, MAX_PATH_LEN, "%s/.backup.conf", gpHomeDir) < 0))
+        return -1;
 
     return 0;
 }
 
-static int init(void)
+/* create temporary backup dir */
+static int CreateBackupDir(void)
 {
-    if (!(home_dir = getenv(ENV_HOME)))
-    {
-	error("getenv()");
-	return -1;
-    }
-    if (!getcwd(working_dir, MAX_PATH_LN))
-    {
-	error("getcwd()");
-	return -1;
-    }
-    if ((snprintf(backup_tar_gz, MAX_PATH_LN, "%s/backup.tar.gz", 
-	working_dir)) < 0)
-    {
-	error("snprintf()");
-	return -1;
-    }
-
-    if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0))
-    {
-	return -1;
-    }
-    return 0;
-}
-
-static int create_backup_dir(void)
-{
-#define BACKUPDIR "backup"
+#define BACKUP_DIR "backup"
 
     int ret, i = 0;
-    char *tmp = backup_dir;
+    char *pTmp;
 
-    bzero(backup_dir, MAX_PATH_LN);
-    bzero(tmp, MAX_PATH_LN);
+    bzero(gBackupDir, MAX_PATH_LEN);
+    pTmp = gBackupDir;
     /* add leading underscores if the backup directory allready exists */
     do
     {
-	snprintf(&(tmp[i]), MAX_PATH_LN - (i + i), BACKUPDIR);
-	if ((ret = mkdir(backup_dir, 0777)) == -1)
-	{
-	    if (errno != EEXIST)
-	    {
-		error("mkdir()");
-		return -1;
-	    }
+        snprintf(&(pTmp[i]), MAX_PATH_LEN - (i + i), BACKUP_DIR);
+        if ((ret = mkdir(gBackupDir, 0777)) == -1)
+        {
+            if (errno != EEXIST)
+            {
+                ERROR("mkdir()");
+                return -1;
+            }
 
-	    tmp[i] = '_';
-	}
-	i++;
-    }
-    while (ret && (i < (MAX_PATH_LN - strlen(backup_conf) - 1)));
+            pTmp[i] = '_';
+        }
+        i++;
+    } while (ret && (i < (MAX_PATH_LEN - strlen(gBackupConf) - 1)));
 
     return ret;
 }
 
-static int cp_to_budir(void)
+/* copy configuration file locations to backup directory */
+static int CopyToBackupDir(void)
 {
-    path_t *cp_paths = NULL;
+    path_t *cpPaths = NULL;
 
-    conf_cleanup(); /* XXX handle errors */
-    paths_create(&cp_paths); /* XXX handle errors */
+    ConfCleanup(); /* XXX handle errors */
+    PathsCreate(&cpPaths); /* XXX handle errors */
 
-    /* copy backup destinations to backup_dir */
+    /* copy backup destinations to gBackupDir */
     printf("backing up...\n");
-    while (cp_paths)
+    while (cpPaths)
     {
-	path_t *tmp;
+        path_t *pTmp;
 
-	if (sys_exec("cp -r --parents %s %s", cp_paths->str, backup_dir))
-	    error("cp -r --parents %s %s", cp_paths->str, backup_dir);
-	tmp = cp_paths;
-	cp_paths = cp_paths->next;
-	path_free(tmp);
+        if (SysExec("cp -r --parents %s %s", cpPaths->pStr, gBackupDir))
+            ERROR("cp -r --parents %s %s", cpPaths->pStr, gBackupDir);
+        pTmp = cpPaths;
+        cpPaths = cpPaths->pNext;
+        PathFree(pTmp);
     }
 
     return 0;
 }
 
-static int make_tar_gz(void)
+/* make a *.gar.gz of the temporary backup directory */
+static int MakeTarGz(void)
 {
-    return sys_exec("cd %s && tar czf %s .", backup_dir, backup_tar_gz) ? 
-	-1 : 0;
+    return SysExec("cd %s && tar czf %s .", gBackupDir, gBackupTarGz) ? 
+        -1 : 0;
 }
 
-static int remove_backup_dir(void)
+/* remove the backup directory */
+static int RemoveBackupDir(void)
 {
-    if (sys_exec("rm -rf %s", backup_dir))
-	return -1;
-    printf("done: %s%s%s\n", FMT_HIGHLIGHT, backup_tar_gz, 
-	FMT_RESET);
+    if (SysExec("rm -rf %s", gBackupDir))
+        return -1;
+    printf("done: " TEXT_HIGHLIGHT("%s") "\n", gBackupTarGz);
     return 0;
 }
 
-static int optional_backup_conf(char *file_name)
+/* test if a configuration file stated explicitly by the user exists */
+static int IsOptionalBackupConfExit(char *pFileName)
 {
     struct stat st;
 
-    snprintf(backup_conf, MAX_PATH_LN, "%s", file_name);
-    return stat(backup_conf, &st);
+    snprintf(gBackupConf, MAX_PATH_LEN, "%s", pFileName);
+    return stat(gBackupConf, &st) ? 0 : 1;
 }
 
-static int get_args(int argc, char *argv[])
+/* parse user arguments */
+static int GetArgs(int argc, char *argv[])
 {
 #define OPTSTRING "b::evhf"
 
@@ -521,108 +573,179 @@ static int get_args(int argc, char *argv[])
 
     while ((opt = (char)getopt(argc, argv, OPTSTRING)) != -1)
     {
-	switch (opt)
-	{
-	case 'b':
-	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
-		return ACT_ERROR;
-	    if (optarg && optional_backup_conf(optarg))
-		return ACT_NOTEXIST;
-	    ret |= ACT_BACKUP;
-	    break;
-	case 'e':
-	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
-		return ACT_ERROR;
-	    ret |= ACT_EDIT;
-	    break;
-	case 'v':
-	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
-		return ACT_ERROR;
-	    ret |= ACT_VERSION;
-	    break;
-	case 'h':
-	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
-		return ACT_ERROR;
-	    ret |= ACT_HELP;
-	    break;
-	case 'f':
-	    if (supress_conf_cleanup || ret & (ACT_HELP | ACT_VERSION))
-		return ACT_ERROR;
-	    supress_conf_cleanup = 1;
-	    break;
-	default:
-	    return ACT_ERROR;
-	    break;
-	}
+        switch (opt)
+        {
+            case 'b': /* do backup */
+
+                /* conflicting arguments:
+                   - multiple do backup
+                   - do edit
+                   - get help
+                   - get version */
+                if (ret & (BACKUP_ERR_BACKUP | BACKUP_ERR_EDIT | 
+                    BACKUP_ERR_HELP | BACKUP_ERR_VERSION))
+                {
+                    return BACKUP_ERR_ARGS;
+                }
+                if (optarg && !IsOptionalBackupConfExit(optarg))
+                    return BACKUP_ERR_NOTEXIST;
+                ret |= BACKUP_ERR_BACKUP;
+                break;
+
+            case 'e': /* do edit */
+                /* conflicting arguments:
+                   - do backup
+                   - multiple do edit
+                   - get help
+                   - get version */
+                if (ret & (BACKUP_ERR_BACKUP | BACKUP_ERR_EDIT | 
+                    BACKUP_ERR_HELP | BACKUP_ERR_VERSION))
+                {
+                    return BACKUP_ERR_ARGS;
+                }
+                ret |= BACKUP_ERR_EDIT;
+                break;
+
+            case 'v': /* get version */
+                /* conflicting arguments:
+                   - do backup
+                   - do edit
+                   - get help
+                   - multiple get version */
+                if (ret & (BACKUP_ERR_BACKUP | BACKUP_ERR_EDIT | 
+                    BACKUP_ERR_HELP | BACKUP_ERR_VERSION))
+                {
+                    return BACKUP_ERR_ARGS;
+                }
+                ret |= BACKUP_ERR_VERSION;
+                break;
+
+            case 'h': /* get help */
+                /* conflicting arguments:
+                   - do backup
+                   - do edit
+                   - multiple get help
+                   - get version */
+                if (ret & (BACKUP_ERR_BACKUP | BACKUP_ERR_EDIT | 
+                    BACKUP_ERR_HELP | BACKUP_ERR_VERSION))
+                {
+                    return BACKUP_ERR_ARGS;
+                }
+                ret |= BACKUP_ERR_HELP;
+                break;
+
+            case 'f': /* force no configuration file cleanup */
+                /* conflicting arguments:
+                   - multiple force configuration cleanup
+                   - get help
+                   - get version */
+                if (gSupressConfCleanup || ret & (BACKUP_ERR_HELP | 
+                    BACKUP_ERR_VERSION))
+                {
+                    return BACKUP_ERR_ARGS;
+                }
+                gSupressConfCleanup = 1;
+                break;
+            default:
+                return BACKUP_ERR_ARGS;
+                break;
+        }
     }
     return ret;
 }
 
-static int backup(void)
+/* trim possible parameters off a command line, return the command name only */
+static char *CmdLineTrim(char *pStr, char *pBuffer, int len)
 {
-    return create_backup_dir() || cp_to_budir() || make_tar_gz() || 
-	remove_backup_dir() ? -1 : 0;
+    snprintf(pBuffer, len, "%s", pStr);
+    strtok(pBuffer, " ");
+    return pBuffer;
 }
 
-static int edit(void)
+/* trim a full path down to the file / bottom directory name */
+static char *AppNameGet(char *pPath)
 {
-#define DEFAULT_EDITOR "vim"
-#define DEFAULT_DIFFPROG "diff"
+    char *pAppName;
 
-    char *editor = DEFAULT_EDITOR;
-    char *diffprog = DEFAULT_DIFFPROG;
-    char *env_var = NULL;
-    char backup_conf_old[MAX_PATH_LN];
-    FILE *old, *cnf;
+    for (pAppName = pPath + strlen(pPath) - 1; 
+        pAppName >= pPath && *pAppName != '/'; pAppName--);
+
+    return ++pAppName;
+}
+
+/* backup the locations stated in the configuration file */
+static int Backup(void)
+{
+    TEST_EXTERNAL_APP_EXISTS("tar");
+
+    return CreateBackupDir() || CopyToBackupDir() || MakeTarGz() || 
+        RemoveBackupDir() ? -1 : 0;
+}
+
+/* edit the locations stated in the configuration file */
+static int Edit(void)
+{
+    char *pEditor = DEFAULT_EDITOR;
+    char *pDiffProg = DEFAULT_DIFFPROG;
+    char *pEnvVar;
+    char backupConfOld[MAX_PATH_LEN];
+    char externalAppName[MAX_PATH_LEN];
+    FILE *pOld, *pCnf;
     struct stat st;
-    int is_new;
+    int isNew;
 
-    bzero(backup_conf_old, MAX_PATH_LN);
-    snprintf(backup_conf_old, MAX_PATH_LN, "%s.old", backup_conf);
+    bzero(backupConfOld, MAX_PATH_LEN);
+    snprintf(backupConfOld, MAX_PATH_LEN, "%s.old", gBackupConf);
 
-    is_new = stat(backup_conf, &st) == -1 ? 1 : 0;
-    if (!(cnf = fopen(backup_conf, "a+")))
+    isNew = stat(gBackupConf, &st) == -1 ? 1 : 0;
+    if (!(pCnf = fopen(gBackupConf, "a+")))
     {
-	error("fopen(%s, \"a+\")", backup_conf);
-	return -1;
+        ERROR("fopen(%s, \"a+\")", gBackupConf);
+        return -1;
     }
-    if (!(old = fopen(backup_conf_old, "w+")))
+    if (!(pOld = fopen(backupConfOld, "w+")))
     {
-	error("fopen(%s, \"w+\")", backup_conf_old);
-	fclose(cnf);
-	return -1;
+        ERROR("fopen(%s, \"w+\")", backupConfOld);
+        fclose(pCnf);
+        return -1;
     }
 
-    cp_file(old, cnf);
-    fclose(old);
-    fclose(cnf);
+    cpFile(pOld, pCnf);
+    fclose(pOld);
+    fclose(pCnf);
 
-    if ((env_var = getenv(ENV_EDITOR)))
-	editor = env_var;
-    if ((env_var = getenv(ENV_DIFFPROG)))
-	diffprog = env_var;
+    if ((pEnvVar = getenv(ENV_EDITOR)))
+        pEditor = pEnvVar;
+    if ((pEnvVar = getenv(ENV_DIFFPROG)))
+        pDiffProg = pEnvVar;
 
-    sys_exec("%s %s", editor, backup_conf);
-    if (!is_new)
+    TEST_EXTERNAL_APP_EXISTS("%s", CmdLineTrim(pEditor, externalAppName, 
+        MAX_PATH_LEN));
+    TEST_EXTERNAL_APP_EXISTS("%s", CmdLineTrim(pDiffProg, externalAppName,
+        MAX_PATH_LEN));
+
+    SysExec("%s %s", pEditor, gBackupConf);
+    if (!isNew)
     {
-	sys_exec("if [ -n \"`diff %s %s`\" ]; then %s %s %s; else echo "
-	    "\"%s has not been modified\"; fi", backup_conf_old, backup_conf, 
-	    diffprog, backup_conf_old, backup_conf, backup_conf);
+        SysExec("if [ -n \"`diff %s %s`\" ]; then %s %s %s; else echo "
+            "\"%s has not been modified\"; fi", backupConfOld, gBackupConf, 
+            pDiffProg, backupConfOld, gBackupConf, gBackupConf);
     }
-    if (remove(backup_conf_old))
-	error("remove(%s)", backup_conf_old);
-    conf_cleanup();
+    if (remove(backupConfOld))
+        ERROR("remove(%s)", backupConfOld);
+    ConfCleanup();
 
     return 0;
 }
 
-static void version(void)
+/* print application version */
+static void Version(void)
 {
 #define VER_LENGTH 32
     char ver[VER_LENGTH];
 
 #ifdef VERSION
-    snprintf(ver, VER_LENGTH, "%s%.2f%s", FMT_HIGHLIGHT, VERSION, FMT_RESET);
+    snprintf(ver, VER_LENGTH, TEXT_HIGHLIGHT("%.2f"), VERSION);
 #else
     snprintf(ver, VER_LENGTH, "no data is available");
 #endif
@@ -630,91 +753,84 @@ static void version(void)
     printf("backup version: %s\n", ver);
 }
 
-static void usage(void)
+/* print usage message */
+static void Usage(char *pAppPath)
 {
-#define COPYRIGHT 0xA9
+    char *pAppName = AppNameGet(pAppPath);
 
     printf(
-	"usage:	%sbackup < -e | -b [ conf_file ] > [ -f ]%s\n"
-	"      	%sbackup < -v | -h >%s\n"
-	"   where\n"
-	"   %s-e%s  Edit the configuration file.\n"
-	"	Enter the full paths to directories or files you wish to "
-	"backup.\n"
-	"	A line can be commented out by using the %s#%s character.\n"
-	"	Set the environment variable %sEDITOR%s to use an editor of "
-	"your\n"
-	"	choice. If %sEDITOR%s is not set, %sbackup%s will use %svim%s "
-	"for editing\n"
-	"	the configuration file.\n"
-	"	Once an existing configuration file is modified, %sbackup%s\n"
-	"	displays a diff between the previous and the current "
-	"versions.\n"
-	"	Set the environment variable %sDIFFPROG%s to use a diff "
-	"program\n"
-	"	of your choice. If %sDIFFPROG%s is not set, %sbackup%s will "
-	"use %sGNU \n"
-	"	diff%s.\n"
-	"   %s-b%s  Backup the files and directories mentioned in the "
-	"configuration file.\n"
-	"	backup uses the default configuration file (%s) \n"
-	"	unless a %sconf_file%s is stated specifically. \n"
-	"	The gzipped tarball %sbackup.tar.gz%s containing the backed "
-	"up files\n"
-	"	will be placed in the working directory.\n"
-	"   %s-f%s  Do not prompt to clean configuration file of redundant "
-	"paths.\n"
-	"   %s-v%s  Display %sbackup%s version.\n"
-	"   %s-h%s  Print this message and exit.\n"
-	"\n%c IAS, October 2004\n",
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_UNDERLINE, FMT_RESET,
-	FMT_UNDERLINE, FMT_RESET, FMT_HIGHLIGHT, FMT_RESET, FMT_HIGHLIGHT, 
-	FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_UNDERLINE, FMT_RESET,
-	FMT_UNDERLINE, FMT_RESET, FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	backup_conf,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	FMT_HIGHLIGHT, FMT_RESET,
-	COPYRIGHT);
+        "usage:\n"
+        "          " TEXT_HIGHLIGHT("%s < -e | -b [ conf_file ] > [ -f ]") "\n"
+        "          " TEXT_HIGHLIGHT("%s < -v | -h >") "\n"
+        "   where\n"
+        "   " TEXT_HIGHLIGHT("-e") "  Edit the configuration file.\n"
+        "       Enter the full paths to directories or files you "
+        "wish to backup.\n"
+        "       A line can be commented out by using the " 
+        TEXT_HIGHLIGHT("#") " character.\n"
+        "       Set the environment variable " TEXT_UNDERLINE("EDITOR") " to "
+        "use an editor of your choice.\n"
+        "       If " TEXT_UNDERLINE("EDITOR") " is not set, " 
+        TEXT_HIGHLIGHT("%s") " will use " TEXT_HIGHLIGHT("%s") " for editing "
+        "the configuration\n"
+        "       file.\n"
+        "       Once an existing configuration file is modified, "
+        TEXT_HIGHLIGHT("%s") " displays a diff\n"
+        "       between the previous and the current versions.\n"
+        "       Set the environment variable " TEXT_UNDERLINE("DIFFPROG") " to "
+        "use a diff program of your\n"
+        "       choice. If " TEXT_UNDERLINE("DIFFPROG") " is not set, "
+        TEXT_HIGHLIGHT("%s") " will use " TEXT_HIGHLIGHT("%s") ".\n"
+        "   " TEXT_HIGHLIGHT("-b") "  Backup the files and directories "
+        "mentioned in the configuration file.\n"
+        "       " TEXT_HIGHLIGHT("%s") " uses the default configuration file "
+        "(%s)\n"
+        "       unless a " TEXT_HIGHLIGHT("conf_file") " is stated "
+        "specifically.\n"
+        "       The gzipped tarball " TEXT_HIGHLIGHT("%s.tar.gz") " containing "
+        "the backed up files will be\n"
+        "       placed in the working directory.\n"
+        "   " TEXT_HIGHLIGHT("-f") "  Do not prompt to clean configuration "
+        "file of redundant paths.\n"
+        "   " TEXT_HIGHLIGHT("-v") "  Display " 
+        TEXT_HIGHLIGHT("%s") " version.\n"
+        "   " TEXT_HIGHLIGHT("-h") "  Print this message and exit.\n"
+        "\n"
+        "IAS, October 2004\n", pAppName, pAppName, pAppName, DEFAULT_EDITOR, 
+         pAppName, pAppName, DEFAULT_DIFFPROG, pAppName, gBackupConf,
+         pAppName, pAppName); 
 }
 
 int main(int argc, char *argv[])
 {
     int ret = 0;
 
-    init();
-    switch (get_args(argc, argv))
+    Init();
+
+    switch (GetArgs(argc, argv))
     {
-	case ACT_BACKUP:
-	    ret = backup();
-	    break;
-	case ACT_EDIT:
-	    ret = edit();
-	    break;
-	case ACT_VERSION:
-	    version();
-	    break;
-	case ACT_HELP:
-	    usage();
-	    break;
-	case ACT_NOTEXIST:
-	    fprintf(stderr, "file '%s' does not exit\n", backup_conf);
-	    break;
-	case ACT_ERROR:
-	default:
-	    fprintf(stderr, "try 'backup -h' for more information\n");
-	    break;
+        case BACKUP_ERR_BACKUP:
+            ret = Backup();
+            break;
+        case BACKUP_ERR_EDIT:
+            ret = Edit();
+            break;
+        case BACKUP_ERR_VERSION:
+            Version();
+            break;
+        case BACKUP_ERR_HELP:
+            Usage(argv[0]);
+            break;
+        case BACKUP_ERR_NOTEXIST:
+            fprintf(stderr, "file '%s' does not exit\n", gBackupConf);
+            break;
+        case BACKUP_ERR_ARGS: /* fall through */
+        default:
+            fprintf(stderr, "try '%s -h' for more information\n",
+               AppNameGet(argv[0]));
+            break;
     }
+
     return ret;
 }
+

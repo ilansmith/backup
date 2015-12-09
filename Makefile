@@ -1,9 +1,12 @@
+CC=cc
+LD=gcc
+
 PROG=backup
 INSTALL_PATH=/usr/bin
 FILE=CVS/Entries
 FILE_EXISTS=[ -n "`stat $(FILE) 2>&1 | grep -i "no such file or directory"`" ]
 TAG_STR=$(shell $(FILE_EXISTS) || awk -F/ '/Makefile/ { print $$6 }' $(FILE) | grep Ttag-)
-CFLAGS=-g -Wall -Werror
+CFLAGS=-g -std=gnu99 -Wall -Werror
 
 ifneq ($(TAG_STR),)
 VER=$(shell [ -z "$(TAG_STR)" ] || awk -F/ '/Makefile/ { print $$6 }' $(FILE) |\
@@ -12,11 +15,11 @@ VER=$(shell [ -z "$(TAG_STR)" ] || awk -F/ '/Makefile/ { print $$6 }' $(FILE) |\
 DFLAGS+=-DVERSION=$(VER)
 endif
 
-backup: backup.o
-	gcc -o $(PROG) $<
+$(PROG): backup.o
+	$(LD) -o $(PROG) $<
 
 backup.o: backup.c
-	gcc $(CFLAGS) $(DFLAGS) -o $@ -c $<
+	$(CC) $(CFLAGS) $(DFLAGS) -o $@ -c $<
 
 install:
 	install $(PROG) $(INSTALL_PATH)
@@ -29,3 +32,4 @@ clean:
 
 cleanall: clean
 	rm -rf tags $(PROG)
+
