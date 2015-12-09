@@ -16,9 +16,14 @@
 
 #define ACT_BACKUP 0
 #define ACT_EDIT 1
-#define ACT_HELP 2
-#define ACT_ERROR 3
-#define ACT_EXIT 4
+#define	ACT_VERSION 2
+#define ACT_HELP 3
+#define ACT_ERROR 4
+#define ACT_EXIT 5
+
+#define FMT_HIGHLIGHT "\033[1;38m"
+#define FMT_UNDERLINE "\033[4;38m"
+#define FMT_RESET "\033[00;00;00m"
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
@@ -411,7 +416,7 @@ static int optional_backup_conf(char *file_name)
 
 static int get_args(int argc, char *argv[])
 {
-#define ARG_EL "b::eh" /* TODO: v(verbose), h(help) */
+#define ARG_EL "b::evh" /* TODO: v(verbose), h(help) */
 
     int ret;
 
@@ -429,6 +434,9 @@ static int get_args(int argc, char *argv[])
 	    break;
 	case 'e':
 	    ret = (argc == 2) ? ACT_EDIT : ACT_ERROR;
+	    break;
+	case 'v':
+	    ret = (argc == 2) ? ACT_VERSION : ACT_ERROR;
 	    break;
 	case 'h':
 	    ret = (argc == 2) ? ACT_HELP : ACT_ERROR;
@@ -497,11 +505,16 @@ static int edit(void)
     return 0;
 }
 
+static void version(void)
+{
+#define VERSION "1.15"
+
+    printf("backup version %s%s%s\n", FMT_HIGHLIGHT, VERSION, FMT_RESET);
+}
+
+
 static void usage(void)
 {
-#define FMT_HIGHLIGHT "\033[1;38m"
-#define FMT_UNDERLINE "\033[4;38m"
-#define FMT_RESET "\033[00;00;00m"
 #define COPYRIGHT 0xA9
 
     printf(
@@ -531,6 +544,7 @@ static void usage(void)
 	"	The gzipped tarball %sbackup.tar.gz%s containing the backed "
 	"up files\n"
 	"	will be placed in the working directory.\n"
+	"   %s-v%s  Display %sbackup%s version.\n"
 	"   %s-h%s  Print this message and exit.\n"
 	"\n%s%c IAS Software, October 2004%s\n",
 	FMT_HIGHLIGHT, FMT_RESET,
@@ -545,6 +559,8 @@ static void usage(void)
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	backup_conf,
+	FMT_HIGHLIGHT, FMT_RESET,
+	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
 	FMT_HIGHLIGHT, FMT_RESET,
@@ -563,6 +579,9 @@ int main(int argc, char *argv[])
 	    break;
 	case ACT_EDIT:
 	    ret = edit();
+	    break;
+	case ACT_VERSION:
+	    version();
 	    break;
 	case ACT_HELP:
 	    usage();
