@@ -229,23 +229,6 @@ static int cp_file(FILE *to, FILE *from)
     bzero(line, MAX_PATH_LN);
     while (fgets(line, MAX_PATH_LN, from))
     {
-	remove_newline(line);
-	bzero(&buf, sizeof(struct stat));
-	if (stat(line, &buf) == -1)
-	{
-	    if (errno != ENOENT)
-	    {
-		error("stat()");
-		return -1;
-	    }
-
-	    if (del_obsolete_entry(line))
-	    {
-		bzero(line, MAX_PATH_LN);
-		continue;
-	    }
-	}
-	add_newline(line);
 	fputs(line, to);
 	bzero(line, MAX_PATH_LN);
     }
@@ -292,66 +275,73 @@ static int cp_to_budir(void)
 {
     FILE *tmp = NULL, *cnf = NULL;
     char path[MAX_PATH_LN];
-    int update;
     struct stat buf;
 
+    /* open cnf FILE */
     if (!(cnf = fopen(backup_conf, "r+")))
     {
-	error("could not open configuration file %s", backup_conf);
+	error("fopen(%s, \"r+\")", backup_conf);
 	return -1;
     }
 
+    /* open tmp FILE */
     if (!(tmp = tmpfile()))
     {
 	error("tmpfile()");
 	return -1;
     }
 
-    /* copy configuration file to tmp file */
+    /* copy conf file to tmp file and create a new conf file */
     cp_file(tmp, cnf);
     fclose(cnf);
-    update = remove(backup_conf);
-    bzero(path, MAX_PATH_LN);
+    if (remove(backup_conf))
+    {
+	error("remove()");
+	fclose(tmp);
+	return -1;
+    }
+    if (!(cnf = fopen(backup_conf, "w+")))
+    {
+	error("fopen(%s, \"w+\")", backup_conf);
+	fclose(tmp);
+	return -1;
+    }
 
-    /* copy backup destinations to $HOME/.backup */
+    /* copy backup destinations to $HOME/.backup and create new conf file */
+    bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, tmp))
     {
 	remove_newline(path);
 	if (stat(path, &buf) == -1)
 	{
+	    if (errno != ENOENT)
+	    {
+		error("stat(%s, &buf), continuing...", path);
+		bzero(path, MAX_PATH_LN);
+		continue;
+	    }
+	    /* copy a non statted (non existant) path to new conf */
+	    if (!del_obsolete_entry(path))
+	    {
+		add_newline(path);
+		fputs(path, cnf);
+		bzero(path, MAX_PATH_LN);
+		continue;
+	    }
+
 	    bzero(path, MAX_PATH_LN);
 	    continue;
 	}
 
-	if (sys_exec("/bin/cp -r --parents %s %s", path, backup_dir))
+	if (sys_exec("cp -r --parents %s %s", path, backup_dir))
 	{
 	    cleanup();
 	    return -1;
 	}
-	bzero(path, MAX_PATH_LN);
-    }
-
-    /* copy tmp file to configuration file */
-    if (update == -1)
-    {
-	error("could not delete the old configuration the file %s", 
-	    backup_conf);
-	goto Exit;
-    }
-    if (!(cnf = fopen(backup_conf, "w+")))
-    {
-	error("could not create update the configuration file %s", backup_conf);
-	goto Exit;
-    }
-    fseek(tmp, 0, SEEK_SET);
-    fseek(cnf, 0, SEEK_SET);
-    bzero(path, MAX_PATH_LN);
-    while (fgets(path, MAX_PATH_LN, tmp))
-    {
+	add_newline(path);
 	fputs(path, cnf);
 	bzero(path, MAX_PATH_LN);
     }
-    fclose(cnf);
 
 Exit:
     fclose(tmp);
