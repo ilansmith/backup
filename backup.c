@@ -13,6 +13,7 @@
 #define ENV_SHELL "SHELL"
 #define ASSERT_MKDIR 0
 
+/* TODO: get rid of this mechanism */
 #define ASSERT(RET_VAL, FUNC, FLAG) \
 { \
     switch (FLAG) \
@@ -69,9 +70,11 @@
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 #define MAX_PATH_LN 256
+#define BACKUP "backup"
 
 static char *home_dir;
 static char *backup_tar_gz = "backup.tar.gz";
+static char working_dir[MAX_PATH_LN];
 static char backup_dir[MAX_PATH_LN];
 static char backup_conf[MAX_PATH_LN];
 
@@ -93,9 +96,29 @@ static int error(char *fmt, ...)
 
 static int create_backup_dir(void)
 {
-    int ret;
+    int ret, i = 0;
+    char *tmp = backup_dir;
 
-    ASSERT(ret, mkdir(backup_dir, S_IRUSR | S_IWUSR | S_IXUSR), ASSERT_MKDIR);
+    bzero(backup_dir, MAX_PATH_LN);
+    bzero(tmp, MAX_PATH_LN);
+    /* add leading underscores if the backup directory allready exists */
+    do
+    {
+	snprintf(&(tmp[i]), MAX_PATH_LN - (i + i), BACKUP);
+	if ((ret = mkdir(backup_dir, S_IRUSR | S_IWUSR | S_IXUSR)) == -1)
+	{
+	    if (errno != EEXIST)
+	    {
+		error("mkdir()");
+		return -1;
+	    }
+
+	    tmp[i] = '_';
+	}
+	i++;
+    }
+    while (ret && (i < (MAX_PATH_LN - strlen(backup_conf) - 1)));
+
     return ret;
 }
 
@@ -306,7 +329,7 @@ static int cp_to_budir(void)
 	return -1;
     }
 
-    /* copy backup destinations to $HOME/backup and create new conf file */
+    /* copy backup destinations to backup_dir and create new conf file */
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, tmp))
     {
@@ -349,10 +372,18 @@ static int cp_to_budir(void)
 
 static int init(void)
 {
-    home_dir = getenv(ENV_HOME);
+    if (!(home_dir = getenv(ENV_HOME)))
+    {
+	error("getenv()");
+	return -1;
+    }
+    if (!getcwd(working_dir, MAX_PATH_LN))
+    {
+	error("getcwd()");
+	return -1;
+    }
 
-    if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0)
-	|| (snprintf(backup_dir, MAX_PATH_LN, "%s/backup", home_dir) < 0))
+    if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0))
     {
 	return -1;
     }
@@ -361,27 +392,7 @@ static int init(void)
 
 static int make_tar_gz()
 {
-    char cwd[MAX_PATH_LN], tar_file[MAX_PATH_LN];
-
-    bzero(cwd, MAX_PATH_LN);
-    if (!getcwd(cwd, MAX_PATH_LN))
-    {
-	error("getcwd()");
-	return -1;
-    }
-
-    bzero(tar_file, MAX_PATH_LN);
-    if (snprintf(tar_file, MAX_PATH_LN, "%s/%s", cwd, backup_tar_gz) < 0)
-    {
-	error("snprintf()");
-	return -1;
-    }
-
-    if (chdir(home_dir))
-	return -1;
-    if (sys_exec("tar czf %s %s", tar_file, "backup"))
-	return -1;
-    if (chdir(cwd))
+    if (sys_exec("tar czf %s %s", backup_tar_gz, backup_dir))
 	return -1;
     return 0;
 }
