@@ -20,7 +20,6 @@
 #define ACT_HELP 1<<3
 #define ACT_ERROR 1<<4
 #define ACT_EXIT 1<<5
-#define ACT_FORCE 1<<6
 
 #define FMT_HIGHLIGHT "\033[1;38m"
 #define FMT_UNDERLINE "\033[4;38m"
@@ -226,7 +225,7 @@ static int cp_file(FILE *to, FILE *from)
     return (fseek(from, 0, SEEK_SET) || fseek(to, 0, SEEK_SET));
 }
 
-static int handler_conf_cleanup(int no_entry, char *path, void **data)
+static int handler_conf_cleanup(int is_exist, char *path, void **data)
 {
     FILE *cnf = *((FILE **)data);
     char *pptr = NULL;
@@ -235,7 +234,7 @@ static int handler_conf_cleanup(int no_entry, char *path, void **data)
     pptr = del_leading_white(path, MAX_PATH_LN);
 
     /* XXX handle is_whiteline() == -1 */
-    if (!is_wl && no_entry && del_obsolete_entry(pptr))
+    if (!is_wl && !is_exist && del_obsolete_entry(pptr))
 	goto Exit;
 
     add_newline(path);
@@ -245,12 +244,12 @@ Exit:
     return 0;
 }
 
-static int handler_paths_create(int no_entry, char *path, void **data)
+static int handler_paths_create(int is_exist, char *path, void **data)
 {
     path_t *new;
     int ret = 0;
 
-    if (no_entry)
+    if (!is_exist)
 	goto Exit;
 
     if (!(new = path_alloc(del_leading_white(path, MAX_PATH_LN))))
@@ -266,7 +265,7 @@ Exit:
 
 }
 
-static int file_process_generic(FILE *f, int(* handler)(int no_entry, 
+static int file_process_generic(FILE *f, int(* handler)(int is_exist, 
     char *path, void **data), void **data)
 {
     char path[MAX_PATH_LN], *pptr = NULL;
@@ -275,19 +274,19 @@ static int file_process_generic(FILE *f, int(* handler)(int no_entry,
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, f))
     {
-	int val;
+	int is_exist;
 
 	/* line is not whitespaces only or a comment */
 	pptr = del_leading_white(path, MAX_PATH_LN);
 	remove_newline(pptr);
-	if ((val = stat(pptr, &st)) && errno != ENOENT)
+	if ((is_exist = !stat(pptr, &st)) && errno != ENOENT)
 	{
 	    error("stat(%s, &st), continuing...", pptr);
 	    bzero(path, MAX_PATH_LN);
 	    continue;
 	}
 
-	if (handler(val ? 1 : 0, path, data))
+	if (handler(is_exist, path, data))
 	    return -1;
 	bzero(path, MAX_PATH_LN);
     }
@@ -474,8 +473,8 @@ static int cp_to_budir(void)
 {
     path_t *cp_paths = NULL;
 
-    conf_cleanup();
-    paths_create(&cp_paths);
+    conf_cleanup(); /* XXX handle errors */
+    paths_create(&cp_paths); /* XXX handle errors */
 
     while (cp_paths)
     {
@@ -493,9 +492,8 @@ static int cp_to_budir(void)
 
 static int make_tar_gz(void)
 {
-    if (sys_exec("cd %s && tar czf %s .", backup_dir, backup_tar_gz))
-	return -1;
-    return 0;
+    return sys_exec("cd %s && tar czf %s .", backup_dir, backup_tar_gz) ? 
+	-1 : 0;
 }
 
 static int remove_backup_dir(void)
@@ -532,41 +530,29 @@ static int get_args(int argc, char *argv[])
 	switch (opt)
 	{
 	case 'b':
-	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
-		ret & ACT_VERSION)
-	    {
+	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
 		return ACT_ERROR;
-	    }
 	    if (optarg && optional_backup_conf(optarg))
 		return ACT_EXIT;
 	    ret |= ACT_BACKUP;
 	    break;
 	case 'e':
-	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
-		ret & ACT_VERSION)
-	    {
+	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
 		return ACT_ERROR;
-	    }
 	    ret |= ACT_EDIT;
 	    break;
 	case 'v':
-	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
-		ret & ACT_VERSION)
-	    {
+	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
 		return ACT_ERROR;
-	    }
 	    ret |= ACT_VERSION;
 	    break;
 	case 'h':
-	    if (ret & ACT_BACKUP || ret & ACT_EDIT || ret & ACT_HELP || 
-		ret & ACT_VERSION)
-	    {
+	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
 		return ACT_ERROR;
-	    }
 	    ret |= ACT_HELP;
 	    break;
 	case 'f':
-	    if (supress_conf_cleanup || ret & ACT_HELP || ret & ACT_VERSION)
+	    if (supress_conf_cleanup || ret & (ACT_HELP | ACT_VERSION))
 		return ACT_ERROR;
 	    supress_conf_cleanup = 1;
 	    break;
@@ -580,12 +566,8 @@ static int get_args(int argc, char *argv[])
 
 static int backup(void)
 {
-    create_backup_dir();
-    cp_to_budir();
-    make_tar_gz();
-    remove_backup_dir();
-
-    return 0;
+    return create_backup_dir() || cp_to_budir() || make_tar_gz() || 
+	remove_backup_dir() ? -1 : 0;
 }
 
 static int edit(void)
@@ -599,12 +581,12 @@ static int edit(void)
     char backup_conf_old[MAX_PATH_LN];
     FILE *old, *cnf;
     struct stat st;
-    int new_file;
+    int is_new;
 
     bzero(backup_conf_old, MAX_PATH_LN);
     snprintf(backup_conf_old, MAX_PATH_LN, "%s.old", backup_conf);
 
-    new_file = stat(backup_conf, &st) == -1 ? 1 : 0;
+    is_new = stat(backup_conf, &st) == -1 ? 1 : 0;
     if (!(cnf = fopen(backup_conf, "r+")))
     {
 	error("fopen(%s, \"r+\")", backup_conf);
@@ -627,7 +609,7 @@ static int edit(void)
 	diffprog = env_var;
 
     sys_exec("%s %s", editor, backup_conf);
-    if (!new_file)
+    if (!is_new)
     {
 	sys_exec("if [ -n \"`diff %s %s`\" ]; then %s %s %s; else echo "
 	    "\"%s has not been modified\"; fi", backup_conf_old, backup_conf, 
@@ -735,6 +717,7 @@ int main(int argc, char *argv[])
 	case ACT_ERROR:
 	    error("try 'backup -h' for more information");
 	    break;
+	case ACT_EXIT:
 	default:
 	    break;
     }
