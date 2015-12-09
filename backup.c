@@ -19,7 +19,7 @@
 #define	ACT_VERSION 1<<2
 #define ACT_HELP 1<<3
 #define ACT_ERROR 1<<4
-#define ACT_EXIT 1<<5
+#define ACT_NOTEXIST 1<<5
 
 #define FMT_HIGHLIGHT "\033[1m"
 #define FMT_UNDERLINE "\033[4m"
@@ -444,7 +444,6 @@ static int create_backup_dir(void)
     int ret, i = 0;
     char *tmp = backup_dir;
 
-    printf("backing up...\n");
     bzero(backup_dir, MAX_PATH_LN);
     bzero(tmp, MAX_PATH_LN);
     /* add leading underscores if the backup directory allready exists */
@@ -476,6 +475,7 @@ static int cp_to_budir(void)
     paths_create(&cp_paths); /* XXX handle errors */
 
     /* copy backup destinations to backup_dir */
+    printf("backing up...\n");
     while (cp_paths)
     {
 	path_t *tmp;
@@ -509,13 +509,8 @@ static int optional_backup_conf(char *file_name)
 {
     struct stat st;
 
-    if ((stat(file_name, &st) == -1) || (snprintf(backup_conf, MAX_PATH_LN, 
-	"%s", file_name) < 0))
-    {
-	error("file %s does not exit", file_name);
-	return -1;
-    }
-    return 0;
+    snprintf(backup_conf, MAX_PATH_LN, "%s", file_name);
+    return stat(backup_conf, &st);
 }
 
 static int get_args(int argc, char *argv[])
@@ -533,7 +528,7 @@ static int get_args(int argc, char *argv[])
 	    if (ret & (ACT_BACKUP | ACT_EDIT | ACT_HELP | ACT_VERSION))
 		return ACT_ERROR;
 	    if (optarg && optional_backup_conf(optarg))
-		return ACT_EXIT;
+		return ACT_NOTEXIST;
 	    ret |= ACT_BACKUP;
 	    break;
 	case 'e':
@@ -714,11 +709,12 @@ int main(int argc, char *argv[])
 	case ACT_HELP:
 	    usage();
 	    break;
-	case ACT_ERROR:
-	    error("try 'backup -h' for more information");
+	case ACT_NOTEXIST:
+	    fprintf(stderr, "file '%s' does not exit\n", backup_conf);
 	    break;
-	case ACT_EXIT:
+	case ACT_ERROR:
 	default:
+	    fprintf(stderr, "try 'backup -h' for more information\n");
 	    break;
     }
     return ret;
