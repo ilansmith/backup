@@ -11,61 +11,12 @@
 
 #define ENV_HOME "HOME"
 #define ENV_SHELL "SHELL"
-#define ASSERT_MKDIR 0
+#define ENV_EDITOR "EDITOR"
+#define ENV_DIFFPROG "DIFFPROG"
 
-/* TODO: get rid of this mechanism */
-#define ASSERT(RET_VAL, FUNC, FLAG) \
-{ \
-    switch (FLAG) \
-    { \
-	case (ASSERT_MKDIR): \
-	    if (((RET_VAL) = (FUNC)) == -1) \
-	    { \
-		switch (errno) \
-		{ \
-		    case EPERM: \
-				printf("EPERM\n"); \
-			break; \
-		    case EEXIST: \
-				printf("EEXIST\n"); \
-			 break; \
-		    case EFAULT: \
-				printf("EFAULT\n"); \
-			 break; \
-		    case EACCES: \
-			 error("no writing permition"); \
-		         break; \
-		    case ENAMETOOLONG: \
-				printf("ENAMETOOLONG\n"); \
-			 break; \
-		    case ENOENT: \
-			error("A component used as a directory in the " \
-			    "pathname is not, in fact, a directory."); \
-			 break; \
-		    case ENOTDIR: \
-				printf("ENOTDIR\n"); \
-			 break; \
-		    case ENOMEM: \
-				printf("ENOMEM\n"); \
-			 break; \
-		    case EROFS: \
-				printf("EROFS\n"); \
-			break; \
-		    case ELOOP: \
-				printf("ELOOP\n"); \
-			break; \
-		    case ENOSPC: \
-				printf("ENOSPC\n"); \
-			break; \
-		    default: \
-			break; \
-		} \
-	    } \
-	    break; \
-	default: \
-	    error("unknown flag %s", FLAG); \
-    } \
-}
+#define ACT_BACKUP 0
+#define ACT_EDIT 1
+#define ACT_HELP 2
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
@@ -92,79 +43,6 @@ static int error(char *fmt, ...)
     va_end(ap);
 
     return fprintf(stderr, "%s%s%s", ERR_PREFIX, err_str, ERR_SUFFIX);
-}
-
-static int create_backup_dir(void)
-{
-    int ret, i = 0;
-    char *tmp = backup_dir;
-
-    bzero(backup_dir, MAX_PATH_LN);
-    bzero(tmp, MAX_PATH_LN);
-    /* add leading underscores if the backup directory allready exists */
-    do
-    {
-	snprintf(&(tmp[i]), MAX_PATH_LN - (i + i), BACKUP);
-	if ((ret = mkdir(backup_dir, S_IRUSR | S_IWUSR | S_IXUSR)) == -1)
-	{
-	    if (errno != EEXIST)
-	    {
-		error("mkdir()");
-		return -1;
-	    }
-
-	    tmp[i] = '_';
-	}
-	i++;
-    }
-    while (ret && (i < (MAX_PATH_LN - strlen(backup_conf) - 1)));
-
-    return ret;
-}
-
-static int dir_filter(const struct dirent *direp)
-{
-#define CURRENT_DIR "."
-#define PARENT_DIR ".."
-
-    if (!strcmp(direp->d_name, CURRENT_DIR) || 
-	!strcmp(direp->d_name, PARENT_DIR))
-    {
-	return 0;
-    }
-    return 1;
-}
-
-static int remove_backup_dir(void)
-{
-    int fcount, prefix_ln, suffix_ln, ret;
-    char path[MAX_PATH_LN], filenm[MAX_PATH_LN];
-    struct dirent **namelist = NULL;
-
-    bzero(path, MAX_PATH_LN);
-    snprintf(path, MAX_PATH_LN, "%s/%s", home_dir, backup_dir);
-    snprintf(filenm, MAX_PATH_LN, "%s/%s/", home_dir, backup_dir);
-
-    if ((fcount = scandir(path, &namelist, dir_filter, alphasort)) < 0)
-    {
-	error("scandir()");
-	return -1;
-    }
-
-    prefix_ln = strlen(filenm);
-    suffix_ln = MAX_PATH_LN - prefix_ln;
-    while (fcount--)
-    {
-	bzero(filenm + prefix_ln, suffix_ln);
-	strncpy(filenm + prefix_ln, namelist[fcount]->d_name, suffix_ln - 1);
-	printf("removing file %s\n", filenm);
-	remove(filenm);
-	free(namelist[fcount]);
-    }
-    free(namelist);
-
-    ASSERT(ret, remove(path), ASSERT_MKDIR);
-    return ret;
 }
 
 /* removes a newline if it comes as the last non zero charcater in str
@@ -261,7 +139,7 @@ static int cp_file(FILE *to, FILE *from)
 static int sys_exec(char *format, ...)
 {
     va_list ap;
-    int ret = 0, pid, status;
+    int ret = 0, status;
     char *args[4];
 
     char command[MAX_PATH_LN];
@@ -274,7 +152,7 @@ static int sys_exec(char *format, ...)
     if (ret < 0)
 	return -1;
 
-    if (!(pid = fork())) /* child process */
+    if (!fork()) /* child process */
     {
 	args[0] = getenv(ENV_SHELL);
 	args[1] = "-c";
@@ -291,6 +169,55 @@ static int sys_exec(char *format, ...)
 
 static void cleanup(void)
 {
+}
+
+static int init(void)
+{
+    if (!(home_dir = getenv(ENV_HOME)))
+    {
+	error("getenv()");
+	return -1;
+    }
+    if (!getcwd(working_dir, MAX_PATH_LN))
+    {
+	error("getcwd()");
+	return -1;
+    }
+
+    if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0))
+    {
+	return -1;
+    }
+    return 0;
+}
+
+static int create_backup_dir(void)
+{
+    int ret, i = 0;
+    char *tmp = backup_dir;
+
+    printf("backing up...\n");
+    bzero(backup_dir, MAX_PATH_LN);
+    bzero(tmp, MAX_PATH_LN);
+    /* add leading underscores if the backup directory allready exists */
+    do
+    {
+	snprintf(&(tmp[i]), MAX_PATH_LN - (i + i), BACKUP);
+	if ((ret = mkdir(backup_dir, 0777)) == -1)
+	{
+	    if (errno != EEXIST)
+	    {
+		error("mkdir()");
+		return -1;
+	    }
+
+	    tmp[i] = '_';
+	}
+	i++;
+    }
+    while (ret && (i < (MAX_PATH_LN - strlen(backup_conf) - 1)));
+
+    return ret;
 }
 
 static int cp_to_budir(void)
@@ -370,46 +297,128 @@ static int cp_to_budir(void)
     return 0;
 }
 
-static int init(void)
-{
-    if (!(home_dir = getenv(ENV_HOME)))
-    {
-	error("getenv()");
-	return -1;
-    }
-    if (!getcwd(working_dir, MAX_PATH_LN))
-    {
-	error("getcwd()");
-	return -1;
-    }
-
-    if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0))
-    {
-	return -1;
-    }
-    return 0;
-}
-
-static int make_tar_gz()
+static int make_tar_gz(void)
 {
     if (sys_exec("tar czf %s %s", backup_tar_gz, backup_dir))
 	return -1;
     return 0;
 }
 
-static int make_backup()
+static int remove_backup_dir(void)
 {
-    init();
+    if (sys_exec("rm -rf %s", backup_dir))
+	return -1;
+    printf("done: %s\n", backup_tar_gz);
+    return 0;
+}
+
+/*TODO*/
+static int get_args(int argc, char *argv[])
+{
+#define ARG_EL "be" /* TODO: v(verbose), h(help) */
+
+    int ret;
+
+    if (argc != 2)
+	return ACT_HELP;
+
+    switch ((char)getopt(argc, argv, ARG_EL))
+    {
+	case 'b':
+	    ret = ACT_BACKUP;
+	    break;
+	case 'e':
+	    ret = ACT_EDIT;
+	    break;
+	default:
+	    ret = ACT_HELP;
+    }
+    return ret;
+}
+
+static int backup(void)
+{
     create_backup_dir();
     cp_to_budir();
     make_tar_gz();
-//    remove_backup_dir();
+    remove_backup_dir();
 
     return 0;
 }
 
+/*TODO*/
+static int edit(void)
+{
+#define DEFAULT_EDITOR "vim"
+#define DEFAULT_DIFFPROG "diff"
+#define OPEN_NEW "w+"
+#define OPEN_EXIST "r+"
+
+    char *editor = DEFAULT_EDITOR;
+    char *diffprog = DEFAULT_DIFFPROG;
+    char *env_var = NULL;
+    char mode[3] = OPEN_EXIST, backup_conf_tmp[MAX_PATH_LN];
+    FILE *tmp, *cnf;
+    struct stat buf;
+    int new_file = 0;
+
+    bzero(backup_conf_tmp, MAX_PATH_LN);
+    snprintf(backup_conf_tmp, MAX_PATH_LN, "%s.tmp", backup_conf);
+
+    /* test if conf file exists, if not it must be created */
+    if (stat(backup_conf, &buf) == -1)
+    {
+	snprintf(mode, 3, OPEN_NEW);
+	new_file = 1;
+    }
+
+    if (!(tmp = fopen(backup_conf_tmp, "w+")) || 
+	!(cnf = fopen(backup_conf, mode)))
+    {
+	return -1;
+    }
+
+    cp_file(tmp, cnf);
+
+    if ((env_var = getenv(ENV_EDITOR)))
+	editor = env_var;
+    if ((env_var = getenv(ENV_DIFFPROG)))
+	diffprog = env_var;
+
+    sys_exec("%s %s", editor, backup_conf);
+    if (!new_file)
+	sys_exec("%s %s %s", diffprog, backup_conf, backup_conf_tmp);
+    fclose(tmp);
+    fclose(cnf);
+    remove(backup_conf_tmp);
+    return 0;
+}
+
+/*TODO*/
+static void usage(void)
+{
+    printf("usage() coming soon...\n");
+}
+
 int main(int argc, char *argv[])
 {
-    make_backup();
-    return 0;
+    int ret = 0;
+
+    init();
+    switch (get_args(argc, argv))
+    {
+	case ACT_BACKUP:
+	    ret = backup();
+	    break;
+	case ACT_EDIT:
+	    ret = edit();
+	    break;
+	case ACT_HELP:
+	    usage();
+	    break;
+	default:
+	    /* TODO: sanity check */
+	    break;
+    }
+    return ret;
 }
