@@ -1,0 +1,61 @@
+.\" process with:
+.\" groff -man -Tascii backup.1 | less
+
+.TH "backup" "1" "1.34" "Ilan A. Smith" "Utilities"
+.SH "NAME"
+.LP 
+backup \- maintains a list of data to be backed up, and backs it up on demand.
+.SH "SYNTAX"
+.LP 
+backup < \-e | \-b [ conf_file ] > [ \-f ]
+.br 
+backup < \-v | \-h >
+.SH "DESCRIPTION"
+.LP 
+Backup helps maintain the file \fBbackup.conf\fR.
+Every now and again one comes across some data worth holding on to in times of 
+major catastrophe \- such as disk formatting. When ever coming across a file 
+or directory worth keeping, backup should be used to add it to backup.conf. 
+Backup can later be used to backup all the data accumulated.
+.SH "OPTIONS"
+.LP 
+.TP 
+\fB\-e\fR Edit the configuration file
+Enter the full paths to directories or files you wish to backup.
+A line can be commented out by using the # character. Once an existing 
+configuration file is modified, backup displays a diff between the previous and 
+the current versions.
+.TP 
+\fB\-b\fR Backup the data listed in backup.conf
+backup uses the default configuration file (~/.backup.conf) unless a conf_file 
+is stated specifically.
+The gzipped tarball \fBbackup.tar.gz\fR containing the backed up files will be 
+placed in the working directory.
+.br 
+Because the access rights of some paths to be backed up are usually root, it is 
+recommended to backup as root.
+.TP 
+\fB\-f\fR
+Do not prompt to clean configuration file of redundant paths.
+.TP 
+\fB\-v\fR
+Output version information and exit.
+.TP 
+\fB\-h\fR
+Output a help message and exit.
+.SH "FILES"
+.LP 
+\fI~/.backup.conf\fP  Backup file consisting of all the paths to be backed up.
+.SH "ENVIRONMENT VARIABLES"
+.LP 
+.TP 
+\fBEDITOR\fP
+Set this variable to use an editor of your choice. If EDITOR is not set, backup 
+will use vim for editing the configuration file.
+.TP 
+\fBDIFFPROG\fP
+Set this variable to use a diff program of your choice. If DIFFPROG is not set, 
+backup will use GNU diff
+.SH "AUTHOR"
+.LP 
+Ilan A. Smith <lunnys@gmail.com>

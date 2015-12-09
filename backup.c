@@ -148,9 +148,8 @@ static int is_whiteline(char *line, int len)
 
     for (i = 0; i<len && !(is_wl = IS_WHITE_PREFIX(line[i])) && 
 	IS_WHITE_SPACE(line[i]); i++);
-    if (i == len)
-	return -1;
-    return is_wl;
+
+    return i == len ? -1 : is_wl;
 }
 
 static char *del_leading_white(char *path, int len)
@@ -648,7 +647,7 @@ static void usage(void)
 	"	choice. If %sEDITOR%s is not set, %sbackup%s will use %svim%s "
 	"for editing\n"
 	"	the configuration file.\n"
-	"	Once an existing configuration file is modifed, %sbackup%s\n"
+	"	Once an existing configuration file is modified, %sbackup%s\n"
 	"	displays a diff between the previous and the current "
 	"versions.\n"
 	"	Set the environment variable %sDIFFPROG%s to use a diff "
@@ -663,7 +662,7 @@ static void usage(void)
 	"	The gzipped tarball %sbackup.tar.gz%s containing the backed "
 	"up files\n"
 	"	will be placed in the working directory.\n"
-	"   %s-f%s  Do not prompt to clean configuration file of redundent "
+	"   %s-f%s  Do not prompt to clean configuration file of redundant "
 	"paths.\n"
 	"   %s-v%s  Display %sbackup%s version.\n"
 	"   %s-h%s  Print this message and exit.\n"
