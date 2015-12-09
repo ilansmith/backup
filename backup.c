@@ -22,7 +22,6 @@
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 #define MAX_PATH_LN 256
-#define BACKUP "backup"
 
 static char *home_dir;
 static char backup_tar_gz[MAX_PATH_LN];
@@ -199,6 +198,8 @@ static int init(void)
 
 static int create_backup_dir(void)
 {
+#define BACKUPDIR "backup"
+
     int ret, i = 0;
     char *tmp = backup_dir;
 
@@ -208,7 +209,7 @@ static int create_backup_dir(void)
     /* add leading underscores if the backup directory allready exists */
     do
     {
-	snprintf(&(tmp[i]), MAX_PATH_LN - (i + i), BACKUP);
+	snprintf(&(tmp[i]), MAX_PATH_LN - (i + i), BACKUPDIR);
 	if ((ret = mkdir(backup_dir, 0777)) == -1)
 	{
 	    if (errno != EEXIST)
