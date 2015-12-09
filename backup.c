@@ -77,6 +77,16 @@ static int _error(char *err_prefix, char *fmt, ...)
 	FMT_RESET);
 }
 
+static FILE *open_id(char *file, uid_t uid, gid_t gid)
+{
+    FILE *f;
+
+    if (!(f = fopen(file, "w+")))
+	return NULL;
+    chown(file, uid, gid);
+    return f;
+}
+
 static path_t *path_alloc(char *str)
 {
     path_t *ptr = NULL;
@@ -260,24 +270,24 @@ static int file_process_generic(FILE *f, int(* handler)(int no_entry,
     char *path, void **data), void **data)
 {
     char path[MAX_PATH_LN], *pptr = NULL;
-    struct stat buf;
+    struct stat st;
 
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, f))
     {
-	int st;
+	int val;
 
 	/* line is not whitespaces only or a comment */
 	pptr = del_leading_white(path, MAX_PATH_LN);
 	remove_newline(pptr);
-	if ((st = stat(pptr, &buf)) && errno != ENOENT)
+	if ((val = stat(pptr, &st)) && errno != ENOENT)
 	{
-	    error("stat(%s, &buf), continuing...", pptr);
+	    error("stat(%s, &st), continuing...", pptr);
 	    bzero(path, MAX_PATH_LN);
 	    continue;
 	}
 
-	if (handler(st ? 1 : 0, path, data))
+	if (handler(val ? 1 : 0, path, data))
 	    return -1;
 	bzero(path, MAX_PATH_LN);
     }
@@ -288,6 +298,7 @@ static int conf_cleanup(void)
 {
     char backup_conf_bck[MAX_PATH_LN];
     FILE *cnf, *tmp, *bck;
+    struct stat st;
 
     if (supress_conf_cleanup)
 	return 0;
@@ -305,11 +316,20 @@ static int conf_cleanup(void)
 	fclose(cnf);
 	return -1;
     }
+
+    if (stat(backup_conf, &st) == -1)
+    {
+	error("stat(%s)", backup_conf);
+	fclose(cnf);
+	fclose(tmp);
+	return -1;
+    }
+
     /* open bck FILE */
     snprintf(backup_conf_bck, MAX_PATH_LN, "%s.bck", backup_conf);
-    if (!(bck = fopen(backup_conf_bck, "w+")))
+    if (!(bck = open_id(backup_conf_bck, st.st_uid, st.st_gid)))
     {
-	error("fopen(%s, \"w+\")", backup_conf_bck);
+	error("open_id(%s, %d, %d)", backup_conf_bck, st.st_uid, st.st_gid);
 	fclose(cnf);
 	fclose(tmp);
 	return -1;
@@ -329,9 +349,9 @@ static int conf_cleanup(void)
 	fclose(tmp);
 	return -1;
     }
-    if (!(cnf = fopen(backup_conf, "w+")))
+    if (!(cnf = open_id(backup_conf, st.st_uid, st.st_gid)))
     {
-	error("fopen(%s, \"w+\")", backup_conf);
+	error("open_id(%s, %d, %d)", backup_conf, st.st_uid, st.st_gid);
 	fclose(tmp);
 	return -1;
     }
@@ -489,9 +509,9 @@ static int remove_backup_dir(void)
 
 static int optional_backup_conf(char *file_name)
 {
-    struct stat s;
+    struct stat st;
 
-    if ((stat(file_name, &s) == -1) || (snprintf(backup_conf, MAX_PATH_LN, 
+    if ((stat(file_name, &st) == -1) || (snprintf(backup_conf, MAX_PATH_LN, 
 	"%s", file_name) < 0))
     {
 	error("file %s does not exit", file_name);
@@ -576,24 +596,24 @@ static int edit(void)
     char *editor = DEFAULT_EDITOR;
     char *diffprog = DEFAULT_DIFFPROG;
     char *env_var = NULL;
-    char mode[3] = "r+", backup_conf_old[MAX_PATH_LN];
+    char backup_conf_old[MAX_PATH_LN];
     FILE *old, *cnf;
-    struct stat buf;
-    int new_file = 0;
+    struct stat st;
+    int new_file;
 
     bzero(backup_conf_old, MAX_PATH_LN);
     snprintf(backup_conf_old, MAX_PATH_LN, "%s.old", backup_conf);
 
-    /* test if conf file exists, if not it must be created */
-    if (stat(backup_conf, &buf) == -1)
+    new_file = stat(backup_conf, &st) == -1 ? 1 : 0;
+    if (!(cnf = fopen(backup_conf, "r+")))
     {
-	snprintf(mode, 3, "w+");
-	new_file = 1;
+	error("fopen(%s, \"r+\")", backup_conf);
+	return -1;
     }
-
-    if (!(old = fopen(backup_conf_old, "w+")) || 
-	!(cnf = fopen(backup_conf, mode)))
+    if (!(old = fopen(backup_conf_old, "w+")))
     {
+	error("fopen(%s, \"w+\")", backup_conf_old);
+	fclose(cnf);
 	return -1;
     }
 
