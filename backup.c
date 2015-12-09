@@ -628,7 +628,7 @@ static void version(void)
     char ver[VER_LENGTH];
 
 #ifdef VERSION
-    snprintf(ver, VER_LENGTH, "%s%.4g%s", FMT_HIGHLIGHT, VERSION, FMT_RESET);
+    snprintf(ver, VER_LENGTH, "%s%.2f%s", FMT_HIGHLIGHT, VERSION, FMT_RESET);
 #else
     snprintf(ver, VER_LENGTH, "no data is available");
 #endif
