@@ -354,7 +354,6 @@ static int conf_cleanup(void)
 	fclose(tmp);
 	return -1;
     }
-    /* copy backup destinations to backup_dir and create new conf file */
     file_process_generic(tmp, handler_conf_cleanup, (void **)&cnf);
     fclose(tmp);
     fclose(cnf);
@@ -476,6 +475,7 @@ static int cp_to_budir(void)
     conf_cleanup(); /* XXX handle errors */
     paths_create(&cp_paths); /* XXX handle errors */
 
+    /* copy backup destinations to backup_dir */
     while (cp_paths)
     {
 	path_t *tmp;
