@@ -24,6 +24,7 @@
 
 #define FMT_HIGHLIGHT "\033[1;38m"
 #define FMT_UNDERLINE "\033[4;38m"
+#define FMT_ERROR "\033[0;37m"
 #define FMT_RESET "\033[00;00;00m"
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
@@ -39,6 +40,16 @@
 #define IS_WHITE_SPACE(X) (((X) == CHAR_SP) || ((X)== CHAR_TAB))
 #define IS_WHITE_PREFIX(X) (!(X) || IS_HASH(X) || IS_NEWLINE(X))
 
+#define error(fmt, ...) \
+    do \
+    { \
+	char err_prefix[256]; \
+	snprintf(err_prefix, sizeof(err_prefix), "%s:%d, %s(): ", __FILE__, \
+	    __LINE__, __FUNCTION__); \
+	_error(err_prefix, fmt, ##__VA_ARGS__); \
+    } \
+    while (0)
+
 static char *home_dir;
 static char backup_tar_gz[MAX_PATH_LN];
 static char working_dir[MAX_PATH_LN];
@@ -50,6 +61,21 @@ typedef struct path_t {
     char *str;
     struct path_t *next;
 } path_t;
+
+static int _error(char *err_prefix, char *fmt, ...)
+{
+#define MAX_ERR_LN 256
+    va_list ap;
+    char err_str[MAX_ERR_LN];
+
+    memset(err_str, 0, MAX_ERR_LN);
+    va_start(ap, fmt);
+    vsnprintf(err_str, MAX_ERR_LN, fmt, ap);
+    va_end(ap);
+
+    return fprintf(stderr, "%s%s%s%s\n",FMT_ERROR, err_prefix, err_str, 
+	FMT_RESET);
+}
 
 static path_t *path_alloc(char *str)
 {
@@ -76,22 +102,6 @@ static void path_free(path_t *ptr)
 	    free(ptr->str);
 	free(ptr);
     }
-}
-
-static int error(char *fmt, ...)
-{
-#define MAX_ERR_LN 256
-#define ERR_PREFIX "error: "
-#define ERR_SUFFIX "\n"
-    va_list ap;
-    char err_str[MAX_ERR_LN];
-
-    memset(err_str, 0, MAX_ERR_LN);
-    va_start(ap, fmt);
-    vsnprintf(err_str, MAX_ERR_LN, fmt, ap);
-    va_end(ap);
-
-    return fprintf(stderr, "%s%s%s", ERR_PREFIX, err_str, ERR_SUFFIX);
 }
 
 /* removes a newline if it comes as the last non zero charcater in str
@@ -492,12 +502,12 @@ static int optional_backup_conf(char *file_name)
 
 static int get_args(int argc, char *argv[])
 {
-#define ARG_EL "b::evhf"
+#define OPTSTRING "b::evhf"
 
     unsigned int ret = 0;
     char opt;
 
-    while ((opt = (char)getopt(argc, argv, ARG_EL)) != -1)
+    while ((opt = (char)getopt(argc, argv, OPTSTRING)) != -1)
     {
 	switch (opt)
 	{
