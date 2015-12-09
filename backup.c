@@ -34,10 +34,10 @@
 #define CHAR_TAB 0x9 
 #define CHAR_NL 0xA
 #define CHAR_HS 0X23
-#define NEWLINE(X) ((X) == CHAR_NL)
-#define HASH(X) ((X) == CHAR_HS)
-#define WHITESPACE(X) (((X) == CHAR_SP) || ((X)== CHAR_TAB))
-#define WHITELINE(X) (NEWLINE(X) || HASH(X))
+#define IS_NEWLINE(X) ((X) == CHAR_NL)
+#define IS_HASH(X) ((X) == CHAR_HS)
+#define IS_WHITE_SPACE(X) (((X) == CHAR_SP) || ((X)== CHAR_TAB))
+#define IS_WHITE_PREFIX(X) (!(X) || IS_HASH(X) || IS_NEWLINE(X))
 
 static char *home_dir;
 static char backup_tar_gz[MAX_PATH_LN];
@@ -125,19 +125,20 @@ static int add_newline(char *str)
 
 static int is_whiteline(char *line, int len)
 {
-    int i;
+    int i, is_wl;
 
-    for (i = 0; i < len && WHITESPACE(line[i]); i++);
+    for (i = 0; i<len && !(is_wl = IS_WHITE_PREFIX(line[i])) && 
+	IS_WHITE_SPACE(line[i]); i++);
     if (i == len)
-	return 1;
-    return WHITELINE(line[i]) ? 1: 0;
+	return -1;
+    return is_wl;
 }
 
 static char *del_leading_white(char *path, int len)
 {
     char *c_tmp = path;
 
-    while (path && path - c_tmp < len && WHITESPACE(*path))
+    while (path && path - c_tmp < len && IS_WHITE_SPACE(*path))
 	path++;
     return path;
 }
@@ -150,10 +151,10 @@ static int del_obsolete_entry(char *path)
 #define INPUT_SZ 5
 
     char ans[INPUT_SZ];
-    int ret = 0, modified = 0;
+    int ret, modified = 0;
 
-    printf("%s does not exist.\n", path);
-    printf("Do you want to remove it from the configuration file? [Y/n] ");
+    printf("%s%s%s does not exist...\n", FMT_HIGHLIGHT, path, FMT_RESET);
+    printf("do you want to remove it from the configuration file? [Y/n] ");
     bzero(ans, INPUT_SZ);
     fgets(ans, INPUT_SZ, stdin);
     modified = remove_newline(ans);
@@ -166,7 +167,7 @@ static int del_obsolete_entry(char *path)
 	/* if a newline was not encountered,
 	 * it must be found and removed from stdin */
 	if (!modified)
-	    while(!NEWLINE(fgetc(stdin)));
+	    while(!IS_NEWLINE(fgetc(stdin)));
 	bzero(ans, INPUT_SZ);
 	printf("Please answer Y[es] or n[o]: ");
 	fgets(ans, INPUT_SZ, stdin);
@@ -205,35 +206,31 @@ static int cp_file(FILE *to, FILE *from)
     return (fseek(from, 0, SEEK_SET) || fseek(to, 0, SEEK_SET));
 }
 
-static int handler_conf_cleanup(int val, char *path, void **data)
+static int handler_conf_cleanup(int no_entry, char *path, void **data)
 {
     FILE *cnf = *((FILE **)data);
     char *pptr = NULL;
+    int is_wl = is_whiteline(path, MAX_PATH_LN);
+
+    pptr = del_leading_white(path, MAX_PATH_LN);
+
+    /* XXX handle is_whiteline() == -1 */
+    if (!is_wl && no_entry && del_obsolete_entry(pptr))
+	goto Exit;
 
     add_newline(path);
-    pptr = del_leading_white(path, MAX_PATH_LN);
-    if (is_whiteline(path, MAX_PATH_LN))
-    {
-	/* if line is either whitespaces only or a comment insert it */
-	fputs(path, cnf);
-	goto Exit;
-    }
-
-    if (!supress_conf_cleanup && val == -1 && del_obsolete_entry(pptr))
-	goto Exit;;
-
     fputs(path, cnf);
 
 Exit:
     return 0;
 }
 
-static int handler_paths_create(int val, char *path, void **data)
+static int handler_paths_create(int no_entry, char *path, void **data)
 {
     path_t *new;
     int ret = 0;
 
-    if (val == -1)
+    if (no_entry)
 	goto Exit;
 
     if (!(new = path_alloc(del_leading_white(path, MAX_PATH_LN))))
@@ -249,8 +246,8 @@ Exit:
 
 }
 
-static int file_process_generic(FILE *f, int(* handler)(int val, char *path, 
-    void **data), void **data)
+static int file_process_generic(FILE *f, int(* handler)(int no_entry, 
+    char *path, void **data), void **data)
 {
     char path[MAX_PATH_LN], *pptr = NULL;
     struct stat buf;
@@ -258,35 +255,44 @@ static int file_process_generic(FILE *f, int(* handler)(int val, char *path,
     bzero(path, MAX_PATH_LN);
     while (fgets(path, MAX_PATH_LN, f))
     {
-	int val;
+	int st;
 
 	/* line is not whitespaces only or a comment */
 	pptr = del_leading_white(path, MAX_PATH_LN);
 	remove_newline(pptr);
-	val = stat(pptr, &buf); 
-	if (val == -1 && errno != ENOENT)
+	if ((st = stat(pptr, &buf)) && errno != ENOENT)
 	{
 	    error("stat(%s, &buf), continuing...", pptr);
 	    bzero(path, MAX_PATH_LN);
 	    continue;
 	}
 
-	if (handler(val, path, data))
+	if (handler(st ? 1 : 0, path, data))
 	    return -1;
 	bzero(path, MAX_PATH_LN);
     }
     return 0;
 }
 
-static int conf_cleanup(FILE *cnf)
+static int conf_cleanup(void)
 {
     char backup_conf_bck[MAX_PATH_LN];
-    FILE *tmp, *bck;
+    FILE *cnf, *tmp, *bck;
 
+    if (supress_conf_cleanup)
+	return 0;
+
+    /* open cnf FILE */
+    if (!(cnf = fopen(backup_conf, "r+")))
+    {
+	error("fopen(%s, \"r+\")", backup_conf);
+	return -1;
+    }
     /* open tmp FILE */
     if (!(tmp = tmpfile()))
     {
 	error("tmpfile()");
+	fclose(cnf);
 	return -1;
     }
     /* open bck FILE */
@@ -294,6 +300,7 @@ static int conf_cleanup(FILE *cnf)
     if (!(bck = fopen(backup_conf_bck, "w+")))
     {
 	error("fopen(%s, \"w+\")", backup_conf_bck);
+	fclose(cnf);
 	fclose(tmp);
 	return -1;
     }
@@ -308,7 +315,7 @@ static int conf_cleanup(FILE *cnf)
     fclose(cnf);
     if (remove(backup_conf))
     {
-	error("remove(%s), backup_conf");
+	error("remove(%s)", backup_conf);
 	fclose(tmp);
 	return -1;
     }
@@ -321,14 +328,28 @@ static int conf_cleanup(FILE *cnf)
     /* copy backup destinations to backup_dir and create new conf file */
     file_process_generic(tmp, handler_conf_cleanup, (void **)&cnf);
     fclose(tmp);
-    fseek(cnf, 0, SEEK_SET);
+    fclose(cnf);
     if (remove(backup_conf_bck))
-    {
-	error("remove(%s), backup_conf_bck");
-	return -1;
-    }
+	error("remove(%s)", backup_conf_bck);
 
     return 0;
+}
+
+static int paths_create(path_t **cp_paths)
+{
+    int ret;
+    FILE *cnf;
+
+    /* open cnf FILE */
+    if (!(cnf = fopen(backup_conf, "r+")))
+    {
+	error("fopen(%s, \"r+\")", backup_conf);
+	return -1;
+    }
+    ret = file_process_generic(cnf, handler_paths_create, (void **)cp_paths);
+    fclose(cnf);
+
+    return ret;
 }
 
 static int sys_exec(char *format, ...)
@@ -421,19 +442,10 @@ static int create_backup_dir(void)
 
 static int cp_to_budir(void)
 {
-    FILE *cnf = NULL;
     path_t *cp_paths = NULL;
 
-    /* open cnf FILE */
-    if (!(cnf = fopen(backup_conf, "r+")))
-    {
-	error("fopen(%s, \"r+\")", backup_conf);
-	return -1;
-    }
-    conf_cleanup(cnf);
-    /* conf file manipulation completed - no more need for backup */
-    file_process_generic(cnf, handler_paths_create, (void **)&cp_paths);
-    fclose(cnf);
+    conf_cleanup();
+    paths_create(&cp_paths);
 
     while (cp_paths)
     {
@@ -445,6 +457,7 @@ static int cp_to_budir(void)
 	cp_paths = cp_paths->next;
 	path_free(tmp);
     }
+
     return 0;
 }
 
@@ -459,7 +472,8 @@ static int remove_backup_dir(void)
 {
     if (sys_exec("rm -rf %s", backup_dir))
 	return -1;
-    printf("done: %s\n", backup_tar_gz);
+    printf("done: %s%s%s\n", FMT_HIGHLIGHT, backup_tar_gz, 
+	FMT_RESET);
     return 0;
 }
 
@@ -575,6 +589,7 @@ static int edit(void)
 
     cp_file(old, cnf);
     fclose(old);
+    fclose(cnf);
 
     if ((env_var = getenv(ENV_EDITOR)))
 	editor = env_var;
@@ -583,10 +598,14 @@ static int edit(void)
 
     sys_exec("%s %s", editor, backup_conf);
     if (!new_file)
-	sys_exec("%s %s %s", diffprog, backup_conf_old, backup_conf);
-    remove(backup_conf_old);
-    conf_cleanup(cnf);
-    fclose(cnf);
+    {
+	sys_exec("if [ -n \"`diff %s %s`\" ]; then %s %s %s; else echo "
+	    "\"%s has not been modified\"; fi", backup_conf_old, backup_conf, 
+	    diffprog, backup_conf_old, backup_conf, backup_conf);
+    }
+    if (remove(backup_conf_old))
+	error("remove(%s)", backup_conf_old);
+    conf_cleanup();
 
     return 0;
 }
