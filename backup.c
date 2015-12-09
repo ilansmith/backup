@@ -124,11 +124,18 @@ static int PrintError(char *pErrPrefix, char *pErrSuffix, char *pFmt, ...)
 static FILE *OpenId(char *pFileName, uid_t uid, gid_t gid)
 {
     FILE *pFile;
+    int ret;
 
     if (!(pFile = fopen(pFileName, "w+")))
         return NULL;
 
-    chown(pFileName, uid, gid);
+    ret = chown(pFileName, uid, gid);
+    if (ret == -1)
+    {
+        ERROR("could not chown() %s", pFileName);
+        fclose(pFile);
+        exit(1);
+    }
     return pFile;
 }
 
@@ -229,6 +236,7 @@ static int IsDelObsoleteEntry(char *pPath)
     do
     {
         int isNewlineFound;
+        char *pRet;
 
         if (!isFirst)
             printf("Please answer Y[es] or N[o]: ");
@@ -237,7 +245,12 @@ static int IsDelObsoleteEntry(char *pPath)
 
         /* get user's answer */
         bzero(ans, INPUT_SZ);
-        fgets(ans, INPUT_SZ, stdin);
+        pRet = fgets(ans, INPUT_SZ, stdin);
+        if (!pRet)
+        {
+             ERROR("could not read stdin");
+             exit(1);
+        }
         isNewlineFound = RemoveNewline(ans);
 
         /* if a newline was not encountered,
