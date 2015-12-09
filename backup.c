@@ -24,7 +24,7 @@
 #define BACKUP "backup"
 
 static char *home_dir;
-static char *backup_tar_gz = "backup.tar.gz";
+static char backup_tar_gz[MAX_PATH_LN];
 static char working_dir[MAX_PATH_LN];
 static char backup_dir[MAX_PATH_LN];
 static char backup_conf[MAX_PATH_LN];
@@ -183,6 +183,12 @@ static int init(void)
 	error("getcwd()");
 	return -1;
     }
+    if ((snprintf(backup_tar_gz, MAX_PATH_LN, "%s/backup.tar.gz", 
+	working_dir)) < 0)
+    {
+	error("snprintf()");
+	return -1;
+    }
 
     if ((snprintf(backup_conf, MAX_PATH_LN, "%s/.backup.conf", home_dir) < 0))
     {
@@ -299,7 +305,7 @@ static int cp_to_budir(void)
 
 static int make_tar_gz(void)
 {
-    if (sys_exec("tar czf %s %s", backup_tar_gz, backup_dir))
+    if (sys_exec("cd %s && tar czf %s .", backup_dir, backup_tar_gz))
 	return -1;
     return 0;
 }
