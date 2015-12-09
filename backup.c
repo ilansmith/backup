@@ -21,10 +21,10 @@
 #define ACT_ERROR 1<<4
 #define ACT_EXIT 1<<5
 
-#define FMT_HIGHLIGHT "\033[1;38m"
-#define FMT_UNDERLINE "\033[4;38m"
+#define FMT_HIGHLIGHT "\033[1m"
+#define FMT_UNDERLINE "\033[4m"
 #define FMT_ERROR "\033[0;37m"
-#define FMT_RESET "\033[00;00;00m"
+#define FMT_RESET "\033[00;00m"
 
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
