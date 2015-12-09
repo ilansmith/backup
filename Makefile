@@ -3,17 +3,14 @@ LD=gcc
 
 PROG=backup
 INSTALL_PATH=/usr/bin
-FILE=CVS/Entries
-FILE_EXISTS=[ -n "`stat $(FILE) 2>&1 | grep -i "no such file or directory"`" ]
-TAG_STR=$(shell $(FILE_EXISTS) || awk -F/ '/Makefile/ { print $$6 }' $(FILE) | grep Ttag-)
 CFLAGS=-std=gnu99 -Wall -Werror
+VER=$(shell git describe --tag | sed 's/tag-//g')
 
-ifneq ($(TAG_STR),)
-VER=$(shell [ -z "$(TAG_STR)" ] || awk -F/ '/Makefile/ { print $$6 }' $(FILE) |\
-	sed 's/Ttag-//' | sed 's/_/./')
-
-DFLAGS+=-DVERSION=$(VER)
+ifeq ($(VER),)
+VER=N/A
 endif
+
+CFLAGS+=-DVERSION=\"$(VER)\"
 
 ifeq ($(DEBUG),y)
     CFLAGS+=-g -DDEBUG
@@ -25,7 +22,7 @@ $(PROG): backup.o
 	$(LD) -o $(PROG) $<
 
 backup.o: backup.c
-	$(CC) $(CFLAGS) $(DFLAGS) -o $@ -c $<
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 install:
 	install $(PROG) $(INSTALL_PATH)
