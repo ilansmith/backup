@@ -117,8 +117,8 @@ static int del_obsolete_entry(char *path)
 	    ret = 0;
 	    break;
 	default:
-	    /* TODO: sanity check */
-	    break;
+	    error("unreachable switch case");
+	    exit(1);
     }
     return ret;
 }
@@ -133,7 +133,6 @@ static int cp_file(FILE *to, FILE *from)
 	fputs(line, to);
 	bzero(line, MAX_PATH_LN);
     }
-    /* TODO */
     return fseek(to, 0, SEEK_SET);
 }
 
@@ -319,7 +318,6 @@ static int remove_backup_dir(void)
     return 0;
 }
 
-/*TODO*/
 static int get_args(int argc, char *argv[])
 {
 #define ARG_EL "beh" /* TODO: v(verbose), h(help) */
@@ -357,7 +355,6 @@ static int backup(void)
     return 0;
 }
 
-/*TODO*/
 static int edit(void)
 {
 #define DEFAULT_EDITOR "vim"
