@@ -219,7 +219,7 @@ static char *del_leading_white(char *path, int len)
 	return path;
 }
 
-static int is_del_obsolete_entry(char *path)
+static int is_preserve_obsolete_entry(char *path)
 {
 #define INPUT_SZ 5
 
@@ -259,11 +259,11 @@ static int is_del_obsolete_entry(char *path)
 	case 0: /* a newline was replaced by the null terminator */
 	case 'y':
 	case 'Y':
-		ret = 1;
+		ret = 0;
 		break;
 	case 'n':
 	case 'N':
-		ret = 0;
+		ret = 1;
 		break;
 	default:
 		ERROR("unreachable switch case");
@@ -288,7 +288,7 @@ static int cp_file(FILE *to, FILE *from)
 }
 
 /* configuration file cleanup callback function */
-static int handler_conf_cleanup(int is_exit, char *path, void **data)
+static int handler_conf_cleanup(int is_exist, char *path, void **data)
 {
 	FILE *cnf = *((FILE**)data);
 	char *path_ptr = NULL;
@@ -296,20 +296,19 @@ static int handler_conf_cleanup(int is_exit, char *path, void **data)
 
 	path_ptr = del_leading_white(path, MAX_PATH_LEN);
 
-	if (!wl && !is_exit && is_del_obsolete_entry(path_ptr))
-		return 0; /* ignore this path, don't insert it in the new conf
-			     file */
+	if (!wl && !is_exist && !is_preserve_obsolete_entry(path_ptr))
+		return 0; /* do not insert this path into the new conf file */
 	add_newline(path);
 	fputs(path, cnf);
 	return 0;
 }
 
 /* path data structure creation callback function */
-static int handler_paths_create(int is_exit, char *path, void **data)
+static int handler_paths_create(int is_exist, char *path, void **data)
 {
 	path_t *new;
 
-	if (!is_exit)
+	if (!is_exist)
 		return 0;
 
 	if (!(new = path_alloc(del_leading_white(path, MAX_PATH_LEN))))
@@ -330,19 +329,20 @@ static int file_process_genric(FILE *file, file_processing_handler_t handler,
 	bzero(path, MAX_PATH_LEN);
 	while (fgets(path, MAX_PATH_LEN, file)) {
 		char *path_ptr;
-		int is_exit;
+		int stattable;
 		struct stat st;
 
 		/* line is not whitespaces only or a comment */
 		path_ptr = del_leading_white(path, MAX_PATH_LEN);
 		remove_newline(path_ptr);
-		if (!(is_exit = !stat(path_ptr, &st)) && errno != ENOENT) {
-			ERROR("stat(%s, &st), continuing...", path_ptr);
+		if (!(stattable = !stat(path_ptr, &st)) && errno != ENOENT) {
+			ERROR("cannot access %s (%s), continuing...",
+				path_ptr, strerror(errno));
 			bzero(path, MAX_PATH_LEN);
 			continue;
 		}
 
-		if (handler(is_exit, path, data))
+		if (handler(stattable, path, data))
 			return -1;
 		bzero(path, MAX_PATH_LEN);
 	}
