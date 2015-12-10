@@ -675,10 +675,17 @@ static char *app_name_get(char *path)
 /* backup the locations stated in the configuration file */
 static int backup(void)
 {
+	int ret;
+
 	TEST_EXTERNAL_APP_EXISTS("tar");
 
-	return create_backup_dir() || copy_to_backup_dir() || make_tar_gz() || 
-		remove_backup_dir() ? -1 : 0;
+	if (create_backup_dir())
+		return -1;
+
+	if (copy_to_backup_dir() || make_tar_gz())
+		ret = -1;
+
+	return (remove_backup_dir() || ret) ? -1 : 0;
 }
 
 /* edit the locations stated in the configuration file */
